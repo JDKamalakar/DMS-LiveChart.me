@@ -1,0 +1,23 @@
+{
+    "id": "liveChartSchedule",
+    "name": "LiveChart Schedule",
+    "description": "Displays LiveChart anime schedule data pulled from a local browser session.",
+    "category": "utility",
+    "version": "1.0.0",
+    "author": "Antigravity",
+    "type": "widget",
+    "capabilities": [
+        "dankbar-widget"
+    ],
+    "component": "./LiveChartWidget.qml",
+    "settings": "./LiveChartSettings.qml",
+    "icon": "calendar_month",
+    "requires": [
+        "python3"
+    ],
+    "permissions": [
+        "settings_read",
+        "settings_write",
+        "process"
+    ]
+}
