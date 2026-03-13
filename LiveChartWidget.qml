@@ -15,6 +15,7 @@ PluginComponent {
     
     // Configurable properties via pluginData (from Settings)
     property string timeFormat: pluginData.timeFormat || "12h"
+    property bool showSeconds: pluginData.showSeconds !== undefined ? pluginData.showSeconds : false
     property int updateIntervalSeconds: pluginData.updateInterval || 3600
     property string browserName: pluginData.browser || "firefox"
 
@@ -36,20 +37,21 @@ PluginComponent {
     property bool minimumWidth: pluginData.minimumWidth !== undefined ? pluginData.minimumWidth : false
     
     // Day name for dynamic coloring
-    property string currentDayName: ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][new Date().getDay()]
+    property string currentDayName: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date().getDay()]
     
     // Timer to update "Now" position
     property double currentTime: Date.now() / 1000
     Timer {
-        interval: 30000 // 30 seconds
+        interval: 1000 // 1 second for live updates
         running: true
         repeat: true
+        triggeredOnStart: true
         onTriggered: root.currentTime = Date.now() / 1000
     }
 
     // Standard DMS widget capability popout styling
     // Standard DMS widget capability popout styling
-    popoutWidth: 2000 // Increased from 1800 to accommodate wider cards
+    popoutWidth: 2100 // Increased from 2000 to give more padding for scrollbars
 
     Timer {
         id: updateTimer
@@ -231,7 +233,17 @@ PluginComponent {
                             Rectangle {
                                 anchors.fill: parent
                                 radius: 20
-                                color: Theme.withAlpha(Theme.primary, 0.1)
+                                color: iconMA.containsMouse ? Theme.withAlpha(Theme.primary, 0.2) : Theme.withAlpha(Theme.primary, 0.1)
+                                border.width: 1
+                                border.color: iconMA.containsMouse ? Theme.primary : "transparent"
+                                Behavior on color { ColorAnimation { duration: Theme.shortDuration } }
+                                Behavior on border.color { ColorAnimation { duration: Theme.shortDuration } }
+                            }
+
+                            DankRipple {
+                                id: iconRipple
+                                cornerRadius: 20
+                                rippleColor: Theme.primary
                             }
 
                             Image {
@@ -242,6 +254,15 @@ PluginComponent {
                                 sourceSize.height: 24
                                 anchors.centerIn: parent
                                 fillMode: Image.PreserveAspectFit
+                            }
+
+                            MouseArea {
+                                id: iconMA
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onPressed: (mouse) => iconRipple.trigger(mouse.x, mouse.y)
+                                onClicked: Qt.openUrlExternally("https://www.livechart.me/schedule")
                             }
                         }
 
@@ -270,11 +291,10 @@ PluginComponent {
                         anchors.rightMargin: Theme.spacingM
                         anchors.verticalCenter: parent.verticalCenter
                         width: 40
-                        buttonHeight: 40
+                        height: 40
                         horizontalPadding: 0
                         iconName: "refresh"
                         iconSize: 22
-                        backgroundColor: "transparent"
                         textColor: Theme.primary
                         enableRipple: true
 
@@ -312,6 +332,8 @@ PluginComponent {
                         id: dayDelegate
                         width: (ListView.view.width - (ListView.view.spacing * 6)) / 7
                         height: ListView.view.height
+                        
+                        property int dayIndex: index
 
                         Column {
                             id: dayColumn
@@ -334,10 +356,36 @@ PluginComponent {
                                 property int edgeRadius: Theme.cornerRadius
                                 property int innerRadius: Math.min(4, Theme.cornerRadius) // Reverted to 4
                                 
-                                topLeftRadius: index === 0 ? edgeRadius : innerRadius
-                                bottomLeftRadius: index === 0 ? edgeRadius : innerRadius
-                                topRightRadius: index === 6 ? edgeRadius : innerRadius
-                                bottomRightRadius: index === 6 ? edgeRadius : innerRadius
+                                topLeftRadius: dayDelegate.dayIndex === 0 ? edgeRadius : innerRadius
+                                bottomLeftRadius: dayDelegate.dayIndex === 0 ? edgeRadius : innerRadius
+                                topRightRadius: dayDelegate.dayIndex === 6 ? edgeRadius : innerRadius
+                                bottomRightRadius: dayDelegate.dayIndex === 6 ? edgeRadius : innerRadius
+
+                                // Top highlight for 3D effect
+                                Rectangle {
+                                    anchors.top: parent.top
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    height: 1
+                                    color: Theme.withAlpha("#FFFFFF", 0.1)
+                                    topLeftRadius: parent.topLeftRadius
+                                    topRightRadius: parent.topRightRadius
+                                }
+
+                                // Subtle bottom shadow for depth
+                                Rectangle {
+                                    anchors.top: parent.bottom
+                                    width: parent.width
+                                    height: 8
+                                    z: -1 
+                                    bottomLeftRadius: parent.bottomLeftRadius
+                                    bottomRightRadius: parent.bottomRightRadius
+                                    gradient: Gradient {
+                                        GradientStop { position: 0.0; color: Theme.withAlpha("#000000", 0.08) }
+                                        GradientStop { position: 0.3; color: Theme.withAlpha("#000000", 0.03) }
+                                        GradientStop { position: 1.0; color: "transparent" }
+                                    }
+                                }
 
                                 DankRipple {
                                     id: headerRipple
@@ -385,7 +433,7 @@ PluginComponent {
                                 height: 16
                                 anchors.left: parent.left
                                 anchors.leftMargin: dayColumn.timelineX - 1.5 // 1.5 is half of 3px width
-                                color: modelData.day === root.currentDayName ? "#0005FF" : Theme.withAlpha(Theme.surfaceVariantText, 0.2)
+                                color: dayDelegate.dayIndex === 0 ? "#0005FF" : Theme.withAlpha(Theme.surfaceVariantText, 0.2)
                                 radius: 1.5
                             }
 
@@ -422,7 +470,7 @@ PluginComponent {
                                             }
                                         }
 
-                                        if (nowIdx !== -1) {
+                                        if (nowIdx !== -1 && dayDelegate.dayIndex === 0) { // Only scroll for today
                                             // Smooth scroll to target
                                             // positionViewAtIndex doesn't animate, so we could calculate Y
                                             // For simplicity, we'll just position it, but user wants "animation"
@@ -440,142 +488,182 @@ PluginComponent {
                                     onScheduleDataChanged: innerScrollTimer.restart()
                                 }
 
-                                footer: Component {
-                                    Item {
-                                        width: innerListView.width
-                                        height: 30
-                                        visible: {
-                                            if (innerListView.outerDelegate.modelData.day !== root.currentDayName) return false;
-                                            var shows = innerListView.outerDelegate.modelData.shows;
-                                            if (!shows || shows.length === 0) return false;
-                                            var lastShowTime = parseFloat(shows[shows.length-1].timestamp);
-                                            return root.currentTime >= lastShowTime;
-                                        }
+                                 footer: Component {
+                                     Item {
+                                         width: innerListView.width
+                                         height: 30
+                                         visible: {
+                                             if (dayDelegate.dayIndex !== 0) return false;
+                                             var shows = innerListView.model;
+                                             if (!shows || shows.length === 0) return false;
+                                             var lastShowTime = parseFloat(shows[shows.length-1].timestamp);
+                                             return root.currentTime >= lastShowTime;
+                                         }
 
-                                        RowLayout {
-                                            anchors.fill: parent
-                                            anchors.leftMargin: 4
-                                            anchors.rightMargin: 12
-                                            spacing: 8
+                                         // Vertical Timeline Segment
+                                         Rectangle {
+                                             width: 3
+                                             anchors.top: parent.top
+                                             anchors.bottom: parent.bottom
+                                             anchors.left: parent.left
+                                             anchors.leftMargin: innerListView.timelineX - 1.5
+                                             color: "#0005FF"
+                                             z: -1
+                                         }
 
-                                            Rectangle {
-                                                width: 3
-                                                height: parent.height
-                                                anchors.left: parent.left
-                                                anchors.leftMargin: innerListView.timelineX - 1.5 - 4
-                                                color: Theme.withAlpha(Theme.surfaceVariantText, 0.2)
-                                            }
+                                         // Dot on timeline axis
+                                         Rectangle {
+                                             id: footerDot
+                                             width: 8; height: 8; radius: 4
+                                             color: Theme.primary
+                                             x: innerListView.timelineX - 4
+                                             anchors.verticalCenter: parent.verticalCenter
+                                             z: 2
+                                         }
 
-                                            Rectangle {
-                                                Layout.preferredWidth: 10
-                                                height: 10
-                                                radius: 5
-                                                color: Theme.error
-                                                Layout.leftMargin: innerListView.timelineX - 4 - 5
-                                            }
+                                         // Horizontal line to chip
+                                         Rectangle {
+                                             height: 1
+                                             anchors.left: footerDot.horizontalCenter
+                                             anchors.right: footerChip.left
+                                             anchors.rightMargin: 4
+                                             anchors.verticalCenter: parent.verticalCenter
+                                             color: Theme.withAlpha(Theme.primary, 0.4)
+                                             z: 1
+                                         }
 
-                                            Rectangle {
-                                                Layout.fillWidth: true
-                                                height: 1
-                                                color: Theme.withAlpha(Theme.error, 0.4)
-                                            }
+                                         // Time Chip
+                                         Rectangle {
+                                             id: footerChip
+                                             anchors.right: parent.right
+                                             anchors.rightMargin: 16 // Room for scrollbar
+                                             anchors.verticalCenter: parent.verticalCenter
+                                             width: Math.max(footerTime.implicitWidth + 12, 50)
+                                             height: 30
+                                             radius: 10
+                                             color: Theme.primary
 
-                                            StyledText {
-                                                text: (root.timeFormat === "24h" ?
-                                                    Qt.formatTime(new Date(), "HH:mm") :
-                                                    Qt.formatTime(new Date(), "h:mm AP"))
-                                                color: Theme.error
-                                                font.bold: true
-                                                font.pixelSize: 10
-                                                font.capitalization: Font.AllUppercase
-                                            }
-                                        }
-                                    }
-                                }
+                                             StyledText {
+                                                 id: footerTime
+                                                  anchors.centerIn: parent
+                                                  text: {
+                                                      var fmt = root.timeFormat === "24h" ? "HH:mm" : "h:mm AP";
+                                                      if (root.showSeconds) {
+                                                          fmt = root.timeFormat === "24h" ? "HH:mm:ss" : "h:mm:ss AP";
+                                                      }
+                                                      return Qt.formatTime(new Date(root.currentTime * 1000), fmt);
+                                                  }
+                                                  color: "#FFFFFF"
+                                                 font.bold: true
+                                                 font.pixelSize: 10
+                                             }
+                                         }
+                                     }
+                                 }
 
-                                delegate: Item {
-                                    width: innerListView.width
-                                    height: (nowMarker.visible ? nowMarker.height : 0) + (connectorLine.visible ? connectorLine.height : 0) + cardRect.height + 1 // +1 for overlap/no gap
+                                 delegate: Item {
+                                     width: innerListView.width
+                                     height: (nowMarker.visible ? nowMarker.height : 0) + (gapLine.visible ? gapLine.height : 0) + cardRect.height - 1 // -1 matches Column spacing to avoid gaps
 
-                                    Column {
-                                        anchors.fill: parent
-                                        spacing: -1 // Negative spacing to ensure lines overlap slightly and connect seamlessly
+                                     Column {
+                                         anchors.fill: parent
+                                         z: 1 // On top of the line
+                                         spacing: -1 // Negative spacing to ensure lines overlap slightly and connect seamlessly
 
-                                        // Now Marker
-                                        Item {
-                                            id: nowMarker
-                                            width: parent.width
-                                            height: 30
-                                            // Show "Now" marker if this show is the next one to air
-                                            visible: {
-                                                if (!modelData.timestamp) return false;
-                                                var shows = ListView.view ? ListView.view.model : null;
-                                                if (!shows) return false;
-                                                var showTime = parseFloat(modelData.timestamp);
-                                                var prevShowTime = index > 0 ? parseFloat(shows[index-1].timestamp) : 0;
-                                                var now = root.currentTime;
-                                                return now >= prevShowTime && now < showTime;
-                                            }
+                                         // Now Marker
+                                         Item {
+                                             id: nowMarker
+                                             width: parent.width
+                                             height: 30
+                                             visible: {
+                                                 if (dayDelegate.dayIndex !== 0) return false;
+                                                 if (!modelData.timestamp) return false;
+                                                 var shows = innerListView.model;
+                                                 if (!shows) return false;
+                                                 var showTime = parseFloat(modelData.timestamp);
+                                                 var prevShowTime = index > 0 ? parseFloat(shows[index-1].timestamp) : 0;
+                                                 var now = root.currentTime;
+                                                 return now >= prevShowTime && now < showTime;
+                                             }
 
-                                             RowLayout {
-                                                 anchors.fill: parent
-                                                 anchors.leftMargin: 4 // Match card internal padding for alignment
-                                                 anchors.rightMargin: 12
-                                                 spacing: 8
+                                             // Vertical Timeline Segment inside marker
+                                             Rectangle {
+                                                 width: 3
+                                                 anchors.top: parent.top
+                                                 anchors.bottom: parent.bottom
+                                                 anchors.bottomMargin: -2 // Bleed into card for perfect connectivity
+                                                 anchors.left: parent.left
+                                                 anchors.leftMargin: innerListView.timelineX - 1.5
+                                                 color: "#0005FF"
+                                                 z: -1 // Behind potential card border/overlap
+                                             }
 
-                                                 // Vertical line through marker
-                                                 Rectangle {
-                                                     width: 3
-                                                     height: parent.height
-                                                     anchors.left: parent.left
-                                                     anchors.leftMargin: innerListView.timelineX - 1.5 - 4 // -4 for RowLayout margin
-                                                     visible: index > 0
-                                                     color: Theme.withAlpha(Theme.surfaceVariantText, 0.2)
-                                                 }
+                                             // Dot on timeline axis
+                                             Rectangle {
+                                                 id: nowDot
+                                                 width: 8; height: 8; radius: 4
+                                                 color: Theme.primary
+                                                 x: innerListView.timelineX - 4
+                                                 anchors.verticalCenter: parent.verticalCenter
+                                                 z: 3
+                                             }
 
-                                                 Rectangle {
-                                                     id: nowCircle
-                                                     Layout.preferredWidth: 10
-                                                     height: 10
-                                                     radius: 5
-                                                     color: Theme.error
-                                                     Layout.leftMargin: innerListView.timelineX - 4 - 5
-                                                 }
+                                             // Horizontal line to chip
+                                             Rectangle {
+                                                 height: 1
+                                                 anchors.left: nowDot.horizontalCenter
+                                                 anchors.right: nowChip.left
+                                                 anchors.rightMargin: 4
+                                                 anchors.verticalCenter: parent.verticalCenter
+                                                 color: Theme.withAlpha(Theme.primary, 0.4)
+                                                 z: 1
+                                             }
 
-                                                 Rectangle {
-                                                     Layout.fillWidth: true
-                                                     height: 1
-                                                     color: Theme.withAlpha(Theme.error, 0.4)
-                                                 }
+                                             // Time Chip
+                                              Rectangle {
+                                                  id: nowChip
+                                                  anchors.right: parent.right
+                                                  anchors.rightMargin: 16 // Room for scrollbar
+                                                 anchors.verticalCenter: parent.verticalCenter
+                                                 width: Math.max(nowTime.implicitWidth + 12, 50)
+                                                 height: 20
+                                                 radius: 10
+                                                 color: Theme.primary
 
                                                  StyledText {
-                                                     text: (root.timeFormat === "24h" ?
-                                                         Qt.formatTime(new Date(), "HH:mm") :
-                                                         Qt.formatTime(new Date(), "h:mm AP"))
-                                                     color: Theme.error
+                                                     id: nowTime
+                                                     anchors.centerIn: parent
+                                                     text: {
+                                                         var fmt = root.timeFormat === "24h" ? "HH:mm" : "h:mm AP";
+                                                         if (root.showSeconds) {
+                                                             fmt = root.timeFormat === "24h" ? "HH:mm:ss" : "h:mm:ss AP";
+                                                         }
+                                                         return Qt.formatTime(new Date(root.currentTime * 1000), fmt);
+                                                     }
+                                                     color: "#FFFFFF"
                                                      font.bold: true
-                                                     font.pixelSize: 10
-                                                     font.capitalization: Font.AllUppercase
+                                                     font.pixelSize: 12
                                                  }
                                              }
-                                        }
+                                         }
 
-                                        // Connector Line (Vertical) between cards
-                                        Rectangle {
-                                            id: connectorLine
-                                            width: 3
-                                            height: 16
-                                            anchors.left: parent.left
-                                            anchors.leftMargin: innerListView.timelineX - 1.5
-                                            color: dayDelegate.modelData.day === root.currentDayName ? "#0005FF" : Theme.withAlpha(Theme.surfaceVariantText, 0.2)
-                                            radius: 1.5
-                                            visible: index > 0 && !nowMarker.visible
-                                        }
+                                         // Vertical Gap between cards
+                                         Rectangle {
+                                             id: gapLine
+                                             width: 3
+                                             height: 16
+                                             anchors.left: parent.left
+                                             anchors.leftMargin: innerListView.timelineX - 1.5
+                                             anchors.bottomMargin: -2 // Bleed into card
+                                             color: dayDelegate.dayIndex === 0 ? "#0005FF" : Theme.withAlpha(Theme.surfaceVariantText, 0.2)
+                                             visible: !nowMarker.visible
+                                             z: -1
+                                         }
 
                                         Rectangle {
                                             id: cardRect
-                                            width: parent.width
-                                            height: 190 // Further increased height
+                                            width: parent.width - 16 // Room for scrollbar
+                                            height: 190
                                             color: cardMouseArea.containsMouse ? Theme.withAlpha(Theme.surfaceVariant, 0.9) : Theme.withAlpha(Theme.surfaceContainer, 0.8)
                                             radius: 20
                                             border.width: 1
@@ -637,8 +725,9 @@ PluginComponent {
                                                 }
 
                                                 StyledText {
+                                                    id: countdownText
                                                     text: modelData.countdown
-                                                    font.pixelSize: 10
+                                                    font.pixelSize: 12
                                                     color: Theme.surfaceVariantText
                                                     opacity: 0.6
                                                     Layout.fillWidth: true
@@ -646,14 +735,18 @@ PluginComponent {
                                                     visible: text !== ""
                                                 }
 
+                                                // Spacer to push bookmark to the right when countdown is hidden
+                                                Item {
+                                                    Layout.fillWidth: !countdownText.visible
+                                                }
+
                                                  // Bookmark Button (Custom 24px)
                                                  Item {
+                                                     id: bookmarkItem
                                                      Layout.preferredWidth: 24
                                                      Layout.preferredHeight: 24
-                                                     // Mirrored margin: timeline axis is at 40. Card RowLayout starts at 12.
-                                                     // Axis offset from RowLayout edge is 28. Half icon width is 12.
-                                                     // Gap from RowLayout right edge = 28 - 12 = 16.
-                                                     Layout.rightMargin: 16
+                                                     // Mirrored margin: exactly match timeText's left margin
+                                                     Layout.rightMargin: (dayColumn.timelineX - 12) - (timeText.implicitWidth / 2)
 
                                                      DankIcon {
                                                          name: "bookmark"
@@ -682,43 +775,29 @@ PluginComponent {
                                                  }
                                             }
 
-                                            // Glowing POP Ceiling Separator
+                                            // Edge-to-Edge Unified Separator
                                             Item {
                                                 Layout.fillWidth: true
                                                 Layout.leftMargin: -12
                                                 Layout.rightMargin: -12
-                                                Layout.preferredHeight: 16
-                                                clip: true
+                                                Layout.preferredHeight: 13 // 1px line + 12px shadow
 
                                                 Rectangle {
+                                                    id: sepLine
                                                     anchors.top: parent.top
-                                                    anchors.left: parent.left
-                                                    anchors.right: parent.right
-                                                    height: 100
-                                                    color: "transparent"
-                                                    border.width: 1
-                                                    border.color: Qt.rgba(0.5, 0.5, 0.5, 0.3)
-                                                    radius: 12
+                                                    width: parent.width
+                                                    height: 1
+                                                    color: Theme.withAlpha(Theme.surfaceVariantText, 0.15)
+                                                }
 
-                                                    // Generic drop shadow
-                                                    Rectangle {
-                                                        anchors.top: parent.top
-                                                        anchors.left: parent.left
-                                                        anchors.right: parent.right
-                                                        height: 8 // Narrow for sharp shadow depth
-                                                        radius: 12
-                                                        z: -1
-
-                                                        gradient: Gradient {
-                                                            GradientStop {
-                                                                position: 0.0
-                                                                color: Qt.rgba(0, 0, 0, 0.35) // Neutral dark shadow
-                                                            }
-                                                            GradientStop {
-                                                                position: 1.0
-                                                                color: "transparent" // Fade to no shadow quickly
-                                                            }
-                                                        }
+                                                Rectangle {
+                                                    anchors.top: sepLine.bottom
+                                                    width: parent.width
+                                                    height: 12
+                                                    gradient: Gradient {
+                                                        GradientStop { position: 0.0; color: Theme.withAlpha("#000000", 0.06) }
+                                                        GradientStop { position: 0.3; color: Theme.withAlpha("#000000", 0.02) }
+                                                        GradientStop { position: 1.0; color: "transparent" }
                                                     }
                                                 }
                                             }

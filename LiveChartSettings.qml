@@ -48,6 +48,13 @@ PluginSettings {
         defaultValue: "12h"
     }
 
+    ToggleSetting {
+        settingKey: "showSeconds"
+        label: "Show Seconds"
+        description: "Display seconds in the current time highlighter."
+        defaultValue: false
+    }
+
     StringSetting {
         settingKey: "updateInterval"
         label: "Update Interval (s)"
