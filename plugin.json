@@ -3,7 +3,7 @@
     "name": "LiveChart Schedule",
     "description": "Displays LiveChart anime schedule data pulled from a local browser session.",
     "category": "utilities",
-    "version": "1.0.0",
+    "version": "1.0.2",
     "author": "JDKamalakar",
     "icon": "view_timeline",
     "type": "widget",

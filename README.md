@@ -26,12 +26,12 @@ Stay updated on your favorite seasonal anime directly from your desktop with a s
 ### 🖥️ Main Display
 | Pop-Up UI |
 | :--- |
-| <img width="2445" height="766" alt="Pop-UI" src="https://github.com/user-attachments/assets/08455de6-21c4-4ae8-aef9-fa1503b78fcb" /> |
+| <img width="2445" height="766" alt="Pop-UI" src="assets/POP-Up_UI.png" /> |
 
 
 | Dankbar UI |
 | :--- |
-| <img width="272" height="57" alt="Dankbar UI" src="https://github.com/user-attachments/assets/3ad2c5f2-ec25-4856-9b2e-63cde99eba5c" /> |
+| <img width="272" height="57" alt="Dankbar UI" src="assets/Dank-Bar_Widget.png" /> |
 
 
 
@@ -43,7 +43,7 @@ Stay updated on your favorite seasonal anime directly from your desktop with a s
 ### ⚙️ Configuration
 | Settings UI |
 | :--- |
-| <img width="584" height="1236" alt="Settings UI" src="https://github.com/user-attachments/assets/17707d6f-e13f-4766-a852-3ab6e2d34226" />|
+| <img width="584" height="1236" alt="Settings UI" src="assets/Settings.png" />|
 
 ---
 
