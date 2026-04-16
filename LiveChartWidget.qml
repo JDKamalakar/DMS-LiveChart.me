@@ -1095,6 +1095,9 @@ PluginComponent {
                                                 height: 38
                                                 Layout.alignment: Qt.AlignVCenter
                                                 
+                                                scale: hovered ? 1.05 : 1.0
+                                                Behavior on scale { NumberAnimation { duration: 200; easing.type: Theme.standardEasing } }
+
                                                 onClicked: {
                                                     Quickshell.clipboardText = root.installCommand;
                                                     copyAnim.start();
@@ -1109,6 +1112,9 @@ PluginComponent {
                                                         size: 18
                                                         color: Theme.buttonText
                                                         anchors.verticalCenter: parent.verticalCenter
+                                                        
+                                                        scale: copyBtn.hovered ? 1.2 : 1.0
+                                                        Behavior on scale { NumberAnimation { duration: 300; easing.type: Easing.OutBack } }
                                                     }
                                                     StyledText {
                                                         text: "Copy"
@@ -1136,6 +1142,9 @@ PluginComponent {
                                     width: 160
                                     height: 48
                                     
+                                    scale: hovered ? 1.05 : 1.0
+                                    Behavior on scale { NumberAnimation { duration: 200; easing.type: Theme.standardEasing } }
+
                                     onClicked: {
                                         root.isLoading = true;
                                         root.triggerFetch("Retrying...");
@@ -1148,12 +1157,15 @@ PluginComponent {
                                             id: retryBtnIcon
                                             name: "refresh"
                                             size: 20
-                                            color: Theme.onPrimary
+                                            color: Theme.buttonText
                                             anchors.verticalCenter: parent.verticalCenter
+                                            
+                                            rotation: retryBtn.hovered ? 180 : 0
+                                            Behavior on rotation { NumberAnimation { duration: 400; easing.type: Easing.OutBack } }
                                         }
                                         StyledText {
                                             text: "Retry Now"
-                                            color: Theme.onPrimary
+                                            color: Theme.buttonText
                                             font.pixelSize: Theme.fontSizeMedium
                                             font.weight: Font.Medium
                                             anchors.verticalCenter: parent.verticalCenter
