@@ -8,10 +8,54 @@ import re
 import urllib.request
 import hashlib
 from bs4 import BeautifulSoup
+import configparser
 
-def get_cookies_firefox():
+
+def get_default_profile(filename):
+    config = configparser.ConfigParser()
+
+    # Read the file
+    config.read(filename)
+
+    # Iterate through all sections starting with "Profile"
+    for section in config.sections():
+        if section.startswith("Profile"):
+            # Check if the 'Default' key exists and is '1'
+            if config.get(section, "Default", fallback="0") == "1":
+                return {
+                    "section": section,
+                    "name": config.get(section, "Name"),
+                    "path": config.get(section, "Path"),
+                }
+
+    return None
+
+
+# Usage
+def get_zen_profile():
     import glob
-    profiles = glob.glob(os.path.expanduser('~/.mozilla/firefox/*.default-release'))
+
+    default = get_default_profile(os.path.expanduser("~/.config/zen/profiles.ini"))
+    profiles = os.path.expanduser(f"~/.config/zen/{default}")
+    if not profiles:
+        profiles = glob.glob(os.path.expanduser("~/.config/zen/*.default"))
+
+    if not profiles:
+        return ""
+    return profiles
+
+
+def get_cookies_firefox(browser_type):
+    import glob
+
+    profiles = ""
+
+    if browser_type == "zen":
+        profiles = get_zen_profile()
+
+    if not profiles:
+        profiles = glob.glob(os.path.expanduser("~/.mozilla/firefox/*.default-release"))
+
     if not profiles:
         profiles = glob.glob(os.path.expanduser('~/.mozilla/firefox/*.default'))
     
@@ -55,8 +99,8 @@ def get_cookies_chrome(browser_type):
     return cj
 
 def extract_cookie_header(browser_type):
-    if browser_type == "firefox":
-        return get_cookies_firefox()
+    if browser_type == "firefox" or browser_type == "zen":
+        return get_cookies_firefox(browser_type)
     elif browser_type in ["chrome", "chrome_beta"]:
         cj = get_cookies_chrome(browser_type)
         if cj:
@@ -84,7 +128,7 @@ def _cookie_worker(browser_type, result_file):
         with open(result_file, 'w') as f:
             json.dump({"success": False, "error": str(e)}, f)
 
-CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache")
+CACHE_DIR = os.path.join("/tmp", "liveChartSchedule", "cache")
 
 def download_image(url, opener):
     if not url:
