@@ -11,61 +11,200 @@ from bs4 import BeautifulSoup
 import configparser
 
 
-def get_default_profile(filename):
+def get_default_profile_path(profiles_ini_path):
+    import configparser
+    
+    if not os.path.exists(profiles_ini_path):
+        return None
+        
     config = configparser.ConfigParser()
+    try:
+        config.read(profiles_ini_path)
+    except Exception as e:
+        print(f"DEBUG: Failed to read {profiles_ini_path}: {e}", file=sys.stderr)
+        return None
 
-    # Read the file
-    config.read(filename)
+    base_dir = os.path.dirname(profiles_ini_path)
+    
+    # Priority 1: Check [Install...] sections (Firefox 67+)
+    for section in config.sections():
+        if section.startswith("Install"):
+            path = config.get(section, "Default", fallback=None)
+            if path:
+                full_path = os.path.join(base_dir, path)
+                if os.path.exists(full_path):
+                    print(f"DEBUG: Found profile from Install section: {full_path}", file=sys.stderr)
+                    return full_path
 
-    # Iterate through all sections starting with "Profile"
+    # Priority 2: Check [Profile...] sections for Default=1
     for section in config.sections():
         if section.startswith("Profile"):
-            # Check if the 'Default' key exists and is '1'
             if config.get(section, "Default", fallback="0") == "1":
-                return {
-                    "section": section,
-                    "name": config.get(section, "Name"),
-                    "path": config.get(section, "Path"),
-                }
+                path = config.get(section, "Path", fallback=None)
+                if path:
+                    is_relative = config.get(section, "IsRelative", fallback="1") == "1"
+                    full_path = os.path.join(base_dir, path) if is_relative else path
+                    if os.path.exists(full_path):
+                        print(f"DEBUG: Found profile from Profile section (Default=1): {full_path}", file=sys.stderr)
+                        return full_path
+                        
+    # Priority 3: Fallback to any profile
+    for section in config.sections():
+        if section.startswith("Profile"):
+            path = config.get(section, "Path", fallback=None)
+            if path:
+                is_relative = config.get(section, "IsRelative", fallback="1") == "1"
+                full_path = os.path.join(base_dir, path) if is_relative else path
+                if os.path.exists(full_path):
+                    print(f"DEBUG: Found fallback profile: {full_path}", file=sys.stderr)
+                    return full_path
 
     return None
 
 
-# Usage
-def get_zen_profile():
+def find_brand_profile_dir(brand):
     import glob
-
-    default = get_default_profile(os.path.expanduser("~/.config/zen/profiles.ini"))
-    profiles = os.path.expanduser(f"~/.config/zen/{default}")
-    if not profiles:
-        profiles = glob.glob(os.path.expanduser("~/.config/zen/*.default"))
-
-    if not profiles:
-        return ""
-    return profiles
+    
+    home = os.path.expanduser("~")
+    search_paths = []
+    
+    if brand == "firefox":
+        search_paths = [
+            os.path.join(home, ".mozilla/firefox"), # Standard
+            os.path.join(home, ".config/mozilla/firefox"), # Fedora / Silverblue Standard
+            os.path.join(home, "snap/firefox/common/.mozilla/firefox"), # Snap
+            os.path.join(home, "snap/firefox/current/.mozilla/firefox"), # Snap Alt
+            os.path.join(home, ".var/app/org.mozilla.firefox/.mozilla/firefox"), # Flatpak
+            os.path.join(home, "Library/Application Support/Firefox"), # macOS style / unusual Linux
+            os.path.join(home, ".mozilla/firefox-trunk"), # Nightly
+            os.path.join(home, ".mozilla/firefox-dev"), # Dev
+        ]
+    elif brand == "zen":
+        search_paths = [
+            os.path.join(home, ".zen"), # Standard
+            os.path.join(home, ".config/zen"), # Legacy
+            os.path.join(home, ".var/app/app.zen_browser.zen/zen"), # Flatpak
+            os.path.join(home, ".var/app/io.github.zen_browser.zen/zen"), # Flatpak Alt
+        ]
+    elif brand == "librewolf":
+        search_paths = [
+            os.path.join(home, ".librewolf"),
+            os.path.join(home, ".var/app/io.gitlab.librewolf-community/.librewolf"),
+        ]
+    elif brand == "waterfox":
+        search_paths = [
+            os.path.join(home, ".waterfox"),
+        ]
+        
+    profile_candidates = []
+    for base in search_paths:
+        if not os.path.isdir(base):
+            continue
+            
+        print(f"DEBUG: Checking browser base directory: {base}", file=sys.stderr)
+        profiles_ini = os.path.join(base, "profiles.ini")
+        profile_path = get_default_profile_path(profiles_ini)
+        if profile_path and os.path.isdir(profile_path):
+            if os.path.exists(os.path.join(profile_path, 'cookies.sqlite')):
+                # Prioritize the default profile found via profiles.ini
+                return profile_path
+            
+        # Aggressive recursive search as fallback
+        for root, dirs, files in os.walk(base, followlinks=True):
+            if 'cookies.sqlite' in files:
+                db_path = os.path.join(root, 'cookies.sqlite')
+                try:
+                    mtime = os.path.getmtime(db_path)
+                    profile_candidates.append((mtime, root))
+                except OSError:
+                    continue
+            # Don't go too deep into cache or other folders
+            if 'cache' in root.lower() or 'storage' in root.lower():
+                dirs[:] = [] 
+                
+    if not profile_candidates:
+        # Final Resort: Deep Search of Home Directory (avoiding obvious non-browser folders)
+        print(f"DEBUG: No standard paths found. Initiating deep search in {home}", file=sys.stderr)
+        exclude_dirs = {'.cache', 'Downloads', 'Pictures', 'Videos', 'Music', 'Desktop', '.local/share/Trash', '.git', 'node_modules', '.cargo', '.sdk'}
+        for root, dirs, files in os.walk(home, followlinks=False):
+            root_parts = root.split(os.sep)
+            if any(part in exclude_dirs for part in root_parts):
+                dirs[:] = [] # Skip excluded trees
+                continue
+                
+            if 'cookies.sqlite' in files:
+                db_path = os.path.join(root, 'cookies.sqlite')
+                # Prioritize paths that look like they belong to a browser
+                if any(x in root.lower() for x in ['firefox', 'mozilla', brand]):
+                    try:
+                        mtime = os.path.getmtime(db_path)
+                        profile_candidates.append((mtime, root))
+                    except OSError:
+                        pass
+            
+            # Limit depth for general home walking to prevent infinite hangs
+            if len(root_parts) - len(home.split(os.sep)) > 6:
+                dirs[:] = []
+                
+    if profile_candidates:
+        # Sort by most recently modified cookies database
+        profile_candidates.sort(key=lambda x: x[0], reverse=True)
+        latest_profile = profile_candidates[0][1]
+        print(f"DEBUG: Found {len(profile_candidates)} candidate profiles. Picking most recent: {latest_profile}", file=sys.stderr)
+        return latest_profile
+                
+    return None
 
 
 def get_cookies_firefox(browser_type):
-    import glob
+    # Step 1: Try browser_cookie3 primary discovery first (standard installations)
+    try:
+        import browser_cookie3
+        print(f"DEBUG: Attempting browser_cookie3 discovery for {browser_type}", file=sys.stderr)
+        
+        cj = None
+        if browser_type == 'firefox':
+            cj = browser_cookie3.firefox(domain_name='livechart.me')
+        elif browser_type in ['librewolf', 'waterfox']:
+            # browser_cookie3 might support these via general firefox() if path is found
+            cj = browser_cookie3.firefox(domain_name='livechart.me')
+            
+        if cj and len(cj) > 0:
+            print(f"DEBUG: browser_cookie3 found {len(cj)} cookies", file=sys.stderr)
+            import urllib.request
+            req = urllib.request.Request("https://www.livechart.me/")
+            cj.add_cookie_header(req)
+            return req.get_header('Cookie', '')
+    except Exception as e:
+        print(f"DEBUG: Initial browser_cookie3 discovery failed: {e}", file=sys.stderr)
 
-    profiles = ""
-
-    if browser_type == "zen":
-        profiles = get_zen_profile()
-
-    if not profiles:
-        profiles = glob.glob(os.path.expanduser("~/.mozilla/firefox/*.default-release"))
-
-    if not profiles:
-        profiles = glob.glob(os.path.expanduser('~/.mozilla/firefox/*.default'))
+    # Step 2: Fallback to Manual Profile Discovery
+    profile_dir = find_brand_profile_dir(browser_type)
     
-    if not profiles:
+    if not profile_dir:
+        print(f"DEBUG: No profile directory found for {browser_type}", file=sys.stderr)
         return ""
         
-    cookie_db = os.path.join(profiles[0], 'cookies.sqlite')
+    cookie_db = os.path.join(profile_dir, 'cookies.sqlite')
     tmp_db = '/tmp/livechart_cookies.sqlite'
     
+    print(f"DEBUG: Using cookie database: {cookie_db}", file=sys.stderr)
+    
     if os.path.exists(cookie_db):
+        # Step 3: Try browser_cookie3 on the SPECIFIC file we found
+        try:
+            import browser_cookie3
+            cj = browser_cookie3.firefox(cookie_file=cookie_db, domain_name='livechart.me')
+            if len(cj) > 0:
+                print(f"DEBUG: browser_cookie3 (file-mode) found {len(cj)} cookies", file=sys.stderr)
+                import urllib.request
+                req = urllib.request.Request("https://www.livechart.me/")
+                cj.add_cookie_header(req)
+                return req.get_header('Cookie', '')
+        except Exception as e:
+            print(f"DEBUG: browser_cookie3 file-mode failed: {e}", file=sys.stderr)
+
+        # Step 4: Final Fallback - Direct SQLite Extraction (Safe as Firefox cookies aren't encrypted on Linux)
         try:
             shutil.copy2(cookie_db, tmp_db)
             conn = sqlite3.connect(tmp_db)
@@ -73,9 +212,17 @@ def get_cookies_firefox(browser_type):
             cursor.execute("SELECT name, value FROM moz_cookies WHERE host LIKE '%livechart.me%'")
             cookies = cursor.fetchall()
             conn.close()
+            print(f"DEBUG: SQLite extraction found {len(cookies)} cookies", file=sys.stderr)
+            try: os.unlink(tmp_db)
+            except: pass
+            
+            if not cookies:
+                return ""
             return "; ".join([f"{name}={value}" for name, value in cookies])
-        except Exception:
+        except Exception as e:
+            print(f"DEBUG: Direct SQLite extraction failed: {e}", file=sys.stderr)
             return ""
+    
     return ""
 
 def get_cookies_chrome(browser_type):
@@ -113,12 +260,6 @@ def extract_cookie_header(browser_type):
 def _cookie_worker(browser_type, result_file):
     import sys
     import os
-    # Critical fix: Close OS-level inherited pipes so hanging children don't keep QML IPC streams open indefinitely
-    try:
-        os.close(1)
-        os.close(2)
-    except OSError:
-        pass
     
     try:
         cookie_str = extract_cookie_header(browser_type)
@@ -127,6 +268,14 @@ def _cookie_worker(browser_type, result_file):
     except Exception as e:
         with open(result_file, 'w') as f:
             json.dump({"success": False, "error": str(e)}, f)
+            
+    # Critical fix: Close OS-level inherited pipes so hanging children don't keep QML IPC streams open indefinitely
+    # Doing this AFTER extraction so debug prints don't hit "Bad file descriptor"
+    try:
+        os.close(1)
+        os.close(2)
+    except OSError:
+        pass
 
 CACHE_DIR = os.path.join("/tmp", "liveChartSchedule", "cache")
 
