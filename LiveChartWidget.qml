@@ -954,25 +954,28 @@ PluginComponent {
                         z: -1
                         opacity: 0.6
                         
-                        ExpressiveShape {
-                            size: 300
-                            color1: Theme.primary
-                            color2: Theme.secondary
-                            duration: 20000
-                        }
-                        
-                        ExpressiveShape {
-                            size: 200
-                            color1: Theme.secondary
-                            color2: Theme.primary
-                            duration: 25000
-                        }
-                        
-                        ExpressiveShape {
-                            size: 250
-                            color1: Theme.withAlpha(Theme.primary, 0.5)
-                            color2: "transparent"
-                            duration: 18000
+                        Repeater {
+                            id: shapeRepeater
+                            model: Math.floor(Math.random() * 3) + 3 // Initialize with 3-5 shapes
+                            
+                            // Re-randomize when error view becomes visible
+                            Connections {
+                                target: errorView
+                                function onVisibleChanged() {
+                                    if (errorView.visible) {
+                                        shapeRepeater.model = Math.floor(Math.random() * 3) + 3;
+                                    }
+                                }
+                            }
+
+                            ExpressiveShape {
+                                // Randomize base parameters for more variety
+                                size: 180 + Math.random() * 200
+                                duration: 15000 + Math.random() * 15000
+                                color1: index % 2 === 0 ? Theme.primary : Theme.secondary
+                                color2: index % 3 === 0 ? "transparent" : (index % 2 === 0 ? Theme.secondary : Theme.primary)
+                                opacity: 0.3 + (Math.random() * 0.2)
+                            }
                         }
                     }
 
@@ -1092,9 +1095,6 @@ PluginComponent {
                                                 height: 38
                                                 Layout.alignment: Qt.AlignVCenter
                                                 
-                                                scale: hovered ? 1.05 : 1.0
-                                                Behavior on scale { NumberAnimation { duration: 200; easing.type: Theme.standardEasing } }
-
                                                 onClicked: {
                                                     Quickshell.clipboardText = root.installCommand;
                                                     copyAnim.start();
@@ -1109,9 +1109,6 @@ PluginComponent {
                                                         size: 18
                                                         color: Theme.buttonText
                                                         anchors.verticalCenter: parent.verticalCenter
-                                                        
-                                                        scale: copyBtn.hovered ? 1.2 : 1.0
-                                                        Behavior on scale { NumberAnimation { duration: 300; easing.type: Easing.OutBack } }
                                                     }
                                                     StyledText {
                                                         text: "Copy"
@@ -1139,9 +1136,6 @@ PluginComponent {
                                     width: 160
                                     height: 48
                                     
-                                    scale: hovered ? 1.05 : 1.0
-                                    Behavior on scale { NumberAnimation { duration: 200; easing.type: Theme.standardEasing } }
-
                                     onClicked: {
                                         root.isLoading = true;
                                         root.triggerFetch("Retrying...");
@@ -1154,15 +1148,12 @@ PluginComponent {
                                             id: retryBtnIcon
                                             name: "refresh"
                                             size: 20
-                                            color: Theme.buttonText
+                                            color: Theme.onPrimary
                                             anchors.verticalCenter: parent.verticalCenter
-                                            
-                                            rotation: retryBtn.hovered ? 180 : 0
-                                            Behavior on rotation { NumberAnimation { duration: 400; easing.type: Easing.OutBack } }
                                         }
                                         StyledText {
                                             text: "Retry Now"
-                                            color: Theme.buttonText
+                                            color: Theme.onPrimary
                                             font.pixelSize: Theme.fontSizeMedium
                                             font.weight: Font.Medium
                                             anchors.verticalCenter: parent.verticalCenter
