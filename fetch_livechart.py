@@ -7,8 +7,8 @@ import os
 import re
 import urllib.request
 import hashlib
-from bs4 import BeautifulSoup
 import configparser
+import subprocess
 
 
 def get_default_profile_path(profiles_ini_path):
@@ -245,7 +245,56 @@ def get_cookies_chrome(browser_type):
         cj = browser_cookie3.chrome(domain_name='livechart.me')
     return cj
 
+def report_missing_dependency(module_name, package_name):
+    """Run pip show for the package and report JSON error to stdout"""
+    try:
+        # Run pip show as requested by the user to get the official status message
+        result = subprocess.run([sys.executable, "-m", "pip", "show", package_name], 
+                               capture_output=True, text=True)
+        
+        detail = result.stderr if result.stderr else result.stdout
+        if "not found" in detail.lower() or result.returncode != 0:
+            error_msg = f"Package '{package_name}' not found. {detail.strip()}"
+        else:
+            error_msg = f"The '{module_name}' library is installed but could not be imported."
+
+        print(json.dumps({
+            "success": False,
+            "error_type": "missing_dependency",
+            "error": error_msg,
+            "dependency": package_name,
+            "install_cmd": f"pip3 install {package_name}"
+        }))
+    except Exception as e:
+        # Fallback if pip show itself fails
+        print(json.dumps({
+            "success": False,
+            "error_type": "missing_dependency",
+            "error": f"The '{module_name}' library is not installed.",
+            "dependency": package_name,
+            "install_cmd": f"pip3 install {package_name}"
+        }))
+    
+    sys.stdout.flush()
+    sys.exit(1)
+
+def check_dependencies():
+    """Ensure all required libraries are present before proceeding"""
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:
+        report_missing_dependency("bs4", "beautifulsoup4")
+        
+    try:
+        import browser_cookie3
+    except ImportError:
+        report_missing_dependency("browser_cookie3", "browser-cookie3")
+
 def extract_cookie_header(browser_type):
+    # Dependency check is now handled globally at startup, 
+    # but we import here to use the module.
+    import browser_cookie3
+
     if browser_type == "firefox" or browser_type == "zen":
         return get_cookies_firefox(browser_type)
     elif browser_type in ["chrome", "chrome_beta"]:
@@ -362,6 +411,7 @@ def get_livechart_data(date_str, browser_type="firefox"):
     req.add_header('User-Agent', user_agent)
     
     try:
+        from bs4 import BeautifulSoup
         response = opener.open(req, timeout=15)
         html = response.read().decode('utf-8')
         soup = BeautifulSoup(html, 'html.parser')
@@ -579,14 +629,35 @@ def get_livechart_data(date_str, browser_type="firefox"):
         os._exit(0)
 
     except Exception as e:
+        import traceback
+        err_msg = str(e)
+        # Capture traceback for detail but keep error message clean
+        print(f"DEBUG: Error in fetch_livechart: {traceback.format_exc()}", file=sys.stderr)
+        
         print(json.dumps({
             "success": False,
-            "error": str(e)
+            "error": err_msg,
+            "error_type": "generic"
         }))
         sys.stdout.flush()
-        os._exit(1)
+        sys.exit(1)
 
 if __name__ == "__main__":
-    date = sys.argv[1] if len(sys.argv) > 1 else "2026-03-01"
-    browser = sys.argv[2] if len(sys.argv) > 2 else "firefox"
-    get_livechart_data(date, browser)
+    try:
+        # Check dependencies before doing anything else
+        check_dependencies()
+        
+        date = sys.argv[1] if len(sys.argv) > 1 else "2026-03-01"
+        browser = sys.argv[2] if len(sys.argv) > 2 else "firefox"
+        get_livechart_data(date, browser)
+    except Exception as e:
+        import traceback
+        err_msg = str(e)
+        print(f"DEBUG: Critical Error in __main__: {traceback.format_exc()}", file=sys.stderr)
+        print(json.dumps({
+            "success": False,
+            "error": err_msg,
+            "error_type": "generic"
+        }))
+        sys.stdout.flush()
+        sys.exit(1)

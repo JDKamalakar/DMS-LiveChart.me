@@ -121,6 +121,8 @@ PluginComponent {
     property var scheduleData: []
     property string statusMessage: "Initializing..."
     property bool isLoading: true
+    property string errorType: ""
+    property string installCommand: ""
 
     onDaysToShowChanged: updateScheduleData()
     onFullScheduleDataChanged: updateScheduleData()
@@ -321,13 +323,18 @@ PluginComponent {
                 try {
                     const parsed = JSON.parse(output);
                     if (parsed.success) {
-                        root.fullScheduleData = parsed.data; // This triggers updateScheduleData() automatically
+                        root.fullScheduleData = parsed.data;
+                        root.errorType = "";
+                        root.installCommand = "";
                     } else {
                         root.statusMessage = parsed.error || "Failed to fetch data";
+                        root.errorType = parsed.error_type || "generic";
+                        root.installCommand = parsed.install_cmd || "";
                         root.fullScheduleData = [];
                     }
                 } catch (e) {
                     root.statusMessage = "Error parsing output from Python script.";
+                    root.errorType = "parse_error";
                     console.error("LiveChart Parser Error:", e, "| Output:", output);
                 }
             }
@@ -336,7 +343,10 @@ PluginComponent {
         onExited: {
             if (exitCode !== 0) {
                 root.isLoading = false;
-                root.statusMessage = "Python script exited with code " + exitCode;
+                if (root.fullScheduleData.length === 0 && root.errorType === "") {
+                    root.statusMessage = "Python script exited with code " + exitCode;
+                    root.errorType = "exit_error";
+                }
             }
         }
     }
@@ -930,15 +940,238 @@ PluginComponent {
                     }
                 }
 
-                // Error state explicitly shown if not loading and no data
-                StyledText {
-                    id: errorText
-                    visible: !root.isLoading && root.scheduleData.length === 0
-                    text: root.statusMessage
-                    color: Theme.surfaceVariantText
-                    font.pixelSize: Theme.fontSizeMedium
+                // Enhanced Error State View
+                Item {
+                    id: errorView
+                    visible: !root.isLoading && (root.scheduleData.length === 0 || root.errorType !== "")
                     width: parent.width
-                    wrapMode: Text.Wrap
+                    height: 540
+                    clip: true
+
+                    // Material 3 Expressive Background Shapes
+                    Item {
+                        anchors.fill: parent
+                        z: -1
+                        opacity: 0.6
+                        
+                        ExpressiveShape {
+                            size: 300
+                            color1: Theme.primary
+                            color2: Theme.secondary
+                            duration: 20000
+                        }
+                        
+                        ExpressiveShape {
+                            size: 200
+                            color1: Theme.secondary
+                            color2: Theme.primary
+                            duration: 25000
+                        }
+                        
+                        ExpressiveShape {
+                            size: 250
+                            color1: Theme.withAlpha(Theme.primary, 0.5)
+                            color2: "transparent"
+                            duration: 18000
+                        }
+                    }
+
+                    // Background Day Segments (Mirroring skeleton/list structure)
+                    Row {
+                        anchors.fill: parent
+                        spacing: 12
+                        Repeater {
+                            model: root.daysToShow
+                            Rectangle {
+                                width: (parent.width - (12 * Math.max(0, root.daysToShow - 1))) / root.daysToShow
+                                height: parent.height
+                                color: Theme.withAlpha(Theme.surfaceVariantText, 0.05)
+                                radius: Theme.cornerRadius
+                                
+                                // Segment Header
+                                Rectangle {
+                                    width: parent.width
+                                    height: 40
+                                    color: Theme.withAlpha(Theme.surfaceVariantText, 0.1)
+                                    radius: Theme.cornerRadius
+                                }
+                            }
+                        }
+                    }
+
+                    // Error Content Card
+                    Column {
+                        anchors.centerIn: parent
+                        width: Math.min(600, parent.width * 0.9)
+                        spacing: Theme.spacingM
+
+                        Rectangle {
+                            width: parent.width
+                            implicitHeight: errorLayout.implicitHeight + Theme.spacingL * 2
+                            radius: 24
+                            color: Theme.withAlpha(Theme.surfaceContainer, 0.8)
+                            border.width: 1
+                            border.color: Theme.withAlpha(Theme.primary, 0.2)
+                            
+                            ColumnLayout {
+                                id: errorLayout
+                                anchors.fill: parent
+                                anchors.margins: Theme.spacingL
+                                spacing: Theme.spacingM
+
+                                DankIcon {
+                                    name: "error"
+                                    size: 64
+                                    color: Theme.primary
+                                    Layout.alignment: Qt.AlignHCenter
+                                }
+
+                                StyledText {
+                                    text: "Snap! Something went wrong"
+                                    font.pixelSize: Theme.fontSizeLarge
+                                    font.bold: true
+                                    color: Theme.surfaceText
+                                    Layout.alignment: Qt.AlignHCenter
+                                }
+
+                                StyledText {
+                                    text: root.statusMessage
+                                    font.pixelSize: Theme.fontSizeMedium
+                                    color: Theme.surfaceVariantText
+                                    horizontalAlignment: Text.AlignHCenter
+                                    wrapMode: Text.Wrap
+                                    Layout.fillWidth: true
+                                }
+
+                                // Dependency specific helper
+                                ColumnLayout {
+                                    visible: root.errorType === "missing_dependency" && root.installCommand !== ""
+                                    Layout.fillWidth: true
+                                    spacing: Theme.spacingS
+
+                                    Rectangle {
+                                        Layout.fillWidth: true
+                                        Layout.preferredHeight: 1
+                                        color: Theme.withAlpha(Theme.surfaceVariantText, 0.1)
+                                    }
+
+                                    StyledText {
+                                        text: "To fix this, please install the missing library:"
+                                        font.pixelSize: Theme.fontSizeSmall
+                                        color: Theme.secondary
+                                        Layout.alignment: Qt.AlignHCenter
+                                    }
+
+                                    Rectangle {
+                                        id: cmdBox
+                                        Layout.fillWidth: true
+                                        Layout.preferredHeight: 60
+                                        radius: 12
+                                        color: Theme.withAlpha("#000000", 0.3)
+                                        border.width: 1
+                                        border.color: Theme.withAlpha(Theme.primary, 0.3)
+
+                                        RowLayout {
+                                            anchors.fill: parent
+                                            anchors.margins: Theme.spacingM
+
+                                            StyledText {
+                                                text: root.installCommand
+                                                font.family: "Monospace"
+                                                font.pixelSize: Theme.fontSizeSmall
+                                                color: Theme.primary
+                                                Layout.fillWidth: true
+                                                Layout.alignment: Qt.AlignVCenter
+                                                verticalAlignment: Text.AlignVCenter
+                                                elide: Text.ElideRight
+                                            }
+
+                                            DankButton {
+                                                id: copyBtn
+                                                width: 110
+                                                height: 38
+                                                Layout.alignment: Qt.AlignVCenter
+                                                
+                                                scale: hovered ? 1.05 : 1.0
+                                                Behavior on scale { NumberAnimation { duration: 200; easing.type: Theme.standardEasing } }
+
+                                                onClicked: {
+                                                    Quickshell.clipboardText = root.installCommand;
+                                                    copyAnim.start();
+                                                }
+                                                
+                                                Row {
+                                                    anchors.centerIn: parent
+                                                    spacing: 8
+                                                    DankIcon {
+                                                        id: copyBtnIcon
+                                                        name: "content_copy"
+                                                        size: 18
+                                                        color: Theme.buttonText
+                                                        anchors.verticalCenter: parent.verticalCenter
+                                                        
+                                                        scale: copyBtn.hovered ? 1.2 : 1.0
+                                                        Behavior on scale { NumberAnimation { duration: 300; easing.type: Easing.OutBack } }
+                                                    }
+                                                    StyledText {
+                                                        text: "Copy"
+                                                        color: Theme.buttonText
+                                                        font.pixelSize: 13
+                                                        font.weight: Font.Medium
+                                                        anchors.verticalCenter: parent.verticalCenter
+                                                    }
+                                                }
+                                                
+                                                SequentialAnimation {
+                                                    id: copyAnim
+                                                    PropertyAction { target: cmdBox; property: "border.color"; value: Theme.success }
+                                                    PauseAnimation { duration: 1000 }
+                                                    PropertyAction { target: cmdBox; property: "border.color"; value: Theme.withAlpha(Theme.primary, 0.3) }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                DankButton {
+                                    id: retryBtn
+                                    Layout.alignment: Qt.AlignHCenter
+                                    width: 160
+                                    height: 48
+                                    
+                                    scale: hovered ? 1.05 : 1.0
+                                    Behavior on scale { NumberAnimation { duration: 200; easing.type: Theme.standardEasing } }
+
+                                    onClicked: {
+                                        root.isLoading = true;
+                                        root.triggerFetch("Retrying...");
+                                    }
+
+                                    Row {
+                                        anchors.centerIn: parent
+                                        spacing: Theme.spacingS
+                                        DankIcon {
+                                            id: retryBtnIcon
+                                            name: "refresh"
+                                            size: 20
+                                            color: Theme.buttonText
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            
+                                            rotation: retryBtn.hovered ? 180 : 0
+                                            Behavior on rotation { NumberAnimation { duration: 400; easing.type: Easing.OutBack } }
+                                        }
+                                        StyledText {
+                                            text: "Retry Now"
+                                            color: Theme.buttonText
+                                            font.pixelSize: Theme.fontSizeMedium
+                                            font.weight: Font.Medium
+                                            anchors.verticalCenter: parent.verticalCenter
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
 
                 // Schedule List Weekly Horizontal Grid
