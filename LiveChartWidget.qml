@@ -96,9 +96,12 @@ PluginComponent {
         Qt.openUrlExternally(url);
     }
 
-    // Calculate targetDate dynamically whenever startDayOffset changes
+    // Track current date reactively for seamless midnight transitions
+    property date today: new Date()
+
+    // Calculate targetDate dynamically whenever startDayOffset or today changes
     property string targetDate: {
-        var d = new Date();
+        var d = new Date(root.today);
         d.setDate(d.getDate() + root.startDayOffset);
         var year = d.getFullYear();
         var month = ("0" + (d.getMonth() + 1)).slice(-2);
@@ -167,7 +170,8 @@ PluginComponent {
     property bool minimumWidth: pluginData.minimumWidth !== undefined ? pluginData.minimumWidth : false
     
     // Day name for dynamic coloring
-    property string currentDayName: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date().getDay()]
+    // Day name for dynamic coloring - now reactive to "today" property
+    property string currentDayName: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][root.today.getDay()]
     
     // Timer to update "Now" position
     property double currentTime: Date.now() / 1000
@@ -176,7 +180,18 @@ PluginComponent {
         running: true
         repeat: true
         triggeredOnStart: true
-        onTriggered: root.currentTime = Date.now() / 1000
+        onTriggered: {
+            let now = new Date();
+            root.currentTime = now.getTime() / 1000;
+            
+            // Seamless midnight transition: check if the day has changed
+            if (now.getDate() !== root.today.getDate()) {
+                console.log("LiveChart: Day transitioned, refreshing data...");
+                root.today = now; 
+                // Updating root.today triggers currentDayName and targetDate re-evaluation,
+                // which in turn triggers triggerFetch via onTargetDateChanged.
+            }
+        }
     }
 
     // Standard DMS widget capability popout styling
