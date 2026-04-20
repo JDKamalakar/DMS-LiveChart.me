@@ -111,7 +111,7 @@ PluginComponent {
     
     // Automatically fetch when targetDate changes (user changes setting)
     onTargetDateChanged: {
-        if (!root.isLoading && fetchProcess) {
+        if (fetchProcess) {
             root.isLoading = true;
             root.fullScheduleData = []; // Clear current data instantly to show skeleton
             root.updateScheduleData();
@@ -154,9 +154,18 @@ PluginComponent {
 
     function triggerFetch(message) {
         if (!fetchProcess) return;
+        
+        console.log("LiveChart: Triggering fetch for date:", root.targetDate, "| Reason:", message);
+        
         if (message) {
             root.statusMessage = message;
         }
+
+        // Restart process if already running to pick up new arguments (critical for date transitions)
+        if (fetchProcess.running) {
+            fetchProcess.running = false;
+        }
+
         // Forcibly re-evaluate and assign command array to avoid QML binding race conditions
         fetchProcess.command = [
             "python3",
