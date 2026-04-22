@@ -119,6 +119,7 @@ PluginSettings {
                     description: "Which browser's cookies to use for authentication and filtering."
                     options: [
                         { label: "Firefox", value: "firefox" },
+                        { label: "Zen Browser", value: "zen" },
                         { label: "Chrome", value: "chrome" },
                         { label: "Chrome Beta", value: "chrome_beta" }
                     ]
