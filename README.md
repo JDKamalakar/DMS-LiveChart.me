@@ -49,6 +49,74 @@ Elegant implementation of the LiveChart.me Dankbar widget and slide-out panel, s
   <img src="assets/Settings.png" width="80%" />
 </div>
 
+## Installing on NixOS
+
+If you're installing the plugin on NixOS, the plugin will not work as the fetcher script won't be able to find the python dependencies it needs to work.
+In order to make the plugin work, you'll need to wrap it with it's dependencies. Here's a code snippet that does it (installing the plugin with DMS' home-manager module):
+
+<div align="left">
+
+```nix
+{
+  programs.dank-material-shell.plugins.liveChartSchedule = { 
+    enable = true;
+    src = let
+      # If you're not using the DMS plugin registry's flake, you can replace this with the plugin's source you're using.
+      liveChartSchedule = inputs.dms-plugin-registry.packages.${pkgs.stdenv.hostPlatform.system}.liveChartSchedule;
+    in
+    lib.mkForce (pkgs.symlinkJoin {
+      inherit (liveChartSchedule) pname version;
+
+      paths = [ liveChartSchedule ];
+      nativeBuildInputs = with pkgs; [
+        python3Packages.wrapPython
+      ];
+
+      pythonInputs = with pkgs.python3Packages; [
+        beautifulsoup4
+        browser-cookie3
+      ];
+
+      postBuild = ''
+        buildPythonPath "$pythonInputs"
+
+        wrapProgram $out/fetch_livechart.py \
+          --prefix PATH : $program_PATH \
+          --set PYTHONHOME ${pkgs.python3} \
+          --set PYTHONPATH $program_PYTHONPATH
+      '';
+    });
+  };
+}
+```
+</div>
+
+Alternatively you can make the dependencies available system-wide (for example if you're not installing the plugin through your NixOS configuration), but this is not recommended and your configuration will likely fail to build.
+
+<div align="left">
+
+```nix
+  {
+    # On NixOS side
+    environment.systemPackages = with pkgs; [
+      (python3.withPackages (ps: with ps; [
+        beautifulsoup4
+        browser-cookie3
+      ]))
+    ];
+
+    # or on home-manager's side
+    home.packages = with pkgs; [
+      (python3.withPackages (ps: with ps; [
+        beautifulsoup4
+        browser-cookie3
+      ]))
+    ];
+  }
+  ```
+
+</div>
+
 ## Contributing
 
 Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
