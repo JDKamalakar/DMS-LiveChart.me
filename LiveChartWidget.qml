@@ -168,7 +168,6 @@ PluginComponent {
 
         // Forcibly re-evaluate and assign command array to avoid QML binding race conditions
         fetchProcess.command = [
-            "python3",
             Qt.resolvedUrl("fetch_livechart.py").toString().replace("file://", ""),
             root.targetDate,
             root.browserName
@@ -333,7 +332,6 @@ PluginComponent {
         id: fetchProcess
         // Resolve the python script relative to this QML file
         command: [
-            "python3",
             Qt.resolvedUrl("fetch_livechart.py").toString().replace("file://", ""),
             root.targetDate,
             root.browserName
