@@ -166,8 +166,14 @@ PluginComponent {
             fetchProcess.running = false;
         }
 
-        // Forcibly re-evaluate and assign command array to avoid QML binding race conditions
+        // Use a robust execution wrapper:
+        // 1. If the script is executable (NixOS wrapper or correctly set permissions), run it directly.
+        // 2. Otherwise, fallback to python3 (standard Linux/Windows-style execution).
+        // This ensures compatibility across both NixOS and regular Linux distributions.
         fetchProcess.command = [
+            "sh", "-c",
+            'script="$1"; shift; if [ -x "$script" ]; then exec "$script" "$@"; else exec python3 "$script" "$@"; fi',
+            "--",
             Qt.resolvedUrl("fetch_livechart.py").toString().replace("file://", ""),
             root.targetDate,
             root.browserName
@@ -331,7 +337,11 @@ PluginComponent {
     Process {
         id: fetchProcess
         // Resolve the python script relative to this QML file
+        // Initial command array using the same robust wrapper as triggerFetch
         command: [
+            "sh", "-c",
+            'script="$1"; shift; if [ -x "$script" ]; then exec "$script" "$@"; else exec python3 "$script" "$@"; fi',
+            "--",
             Qt.resolvedUrl("fetch_livechart.py").toString().replace("file://", ""),
             root.targetDate,
             root.browserName
@@ -366,7 +376,13 @@ PluginComponent {
             if (exitCode !== 0) {
                 root.isLoading = false;
                 if (root.fullScheduleData.length === 0 && root.errorType === "") {
-                    root.statusMessage = "Python script exited with code " + exitCode;
+                    if (exitCode === 126) {
+                        root.statusMessage = "Permission denied. Try: chmod +x fetch_livechart.py";
+                    } else if (exitCode === 127) {
+                        root.statusMessage = "Python 3 or Script not found.";
+                    } else {
+                        root.statusMessage = "Python script exited with code " + exitCode;
+                    }
                     root.errorType = "exit_error";
                 }
             }
@@ -504,22 +520,22 @@ PluginComponent {
                     width: parent.width
                     height: 68
 
-                    Rectangle {
+                    StyledRect {
                         anchors.fill: parent
                         radius: Theme.cornerRadius * 1.5
-                        gradient: Gradient {
-                            GradientStop {
-                                position: 0.0
-                                color: Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, 0.15)
-                            }
-                            GradientStop {
-                                position: 1.0
-                                color: Qt.rgba(Theme.secondary.r, Theme.secondary.g, Theme.secondary.b, 0.08)
-                            }
-                        }
+                        color: Theme.withAlpha(Theme.surfaceContainerHigh, Theme.popupTransparency)
                         border.width: 1
-                        border.color: Theme.withAlpha(Theme.primary, 0.15)
-                        color: Theme.withAlpha(Theme.surfaceContainer, 0.6)
+                        border.color: Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, 0.15)
+
+                        layer.enabled: true
+                        layer.effect: DropShadow {
+                            transparentBorder: true
+                            horizontalOffset: 0
+                            verticalOffset: 3
+                            radius: 12.0
+                            samples: 24
+                            color: Theme.withAlpha(Theme.shadowColor || "#000000", 0.35)
+                        }
                     }
 
                     Row {
@@ -529,24 +545,28 @@ PluginComponent {
                         spacing: Theme.spacingM
 
                         Item {
-                            width: 40
-                            height: 40
+                            width: 44
+                            height: 44
                             anchors.verticalCenter: parent.verticalCenter
 
                             Rectangle {
+                                id: logoBg
                                 anchors.fill: parent
-                                radius: 20
+                                radius: 22
                                 color: iconMA.containsMouse ? Theme.withAlpha(Theme.primary, 0.2) : Theme.withAlpha(Theme.primary, 0.1)
                                 border.width: 1
                                 border.color: iconMA.containsMouse ? Theme.primary : "transparent"
                                 Behavior on color { ColorAnimation { duration: Theme.shortDuration } }
                                 Behavior on border.color { ColorAnimation { duration: Theme.shortDuration } }
+                                scale: iconMA.containsMouse ? 1.1 : 1.0
+                                Behavior on scale { NumberAnimation { duration: 200; easing.type: Easing.OutBack } }
                             }
 
                             DankRipple {
                                 id: iconRipple
-                                cornerRadius: 20
+                                cornerRadius: 22
                                 rippleColor: Theme.primary
+                                anchors.fill: parent
                             }
 
                             Image {
@@ -556,6 +576,8 @@ PluginComponent {
                                 sourceSize: Qt.size(24, 24)
                                 anchors.centerIn: parent
                                 fillMode: Image.PreserveAspectFit
+                                scale: iconMA.containsMouse ? 1.1 : 1.0
+                                Behavior on scale { NumberAnimation { duration: 200; easing.type: Easing.OutBack } }
                             }
 
                             MouseArea {
@@ -575,16 +597,48 @@ PluginComponent {
                             spacing: 2
 
                             StyledText {
+                                id: titleText
                                 text: "LiveChart.me"
                                 font.bold: true
                                 font.pixelSize: Theme.fontSizeLarge
                                 color: Theme.surfaceText
+                                
+                                onTextChanged: titleAnim.restart()
+                                transform: Translate { id: titleTrans }
+                                SequentialAnimation {
+                                    id: titleAnim
+                                    ParallelAnimation {
+                                        NumberAnimation { target: titleText; property: "opacity"; to: 0; duration: 150; easing.type: Easing.OutQuad }
+                                        NumberAnimation { target: titleTrans; property: "y"; to: 5; duration: 150; easing.type: Easing.OutQuad }
+                                    }
+                                    PropertyAction { target: titleTrans; property: "y"; value: -5 }
+                                    ParallelAnimation {
+                                        NumberAnimation { target: titleText; property: "opacity"; to: 1; duration: 150; easing.type: Easing.InQuad }
+                                        NumberAnimation { target: titleTrans; property: "y"; to: 0; duration: 150; easing.type: Easing.InQuad }
+                                    }
+                                }
                             }
 
                             StyledText {
+                                id: statusTextHeader
                                 text: root.statusMessage
                                 font.pixelSize: Theme.fontSizeSmall
                                 color: root.isLoading ? Theme.secondary : Theme.primary
+                                
+                                onTextChanged: statusAnimHeader.restart()
+                                transform: Translate { id: statusTransHeader }
+                                SequentialAnimation {
+                                    id: statusAnimHeader
+                                    ParallelAnimation {
+                                        NumberAnimation { target: statusTextHeader; property: "opacity"; to: 0; duration: 150; easing.type: Easing.OutQuad }
+                                        NumberAnimation { target: statusTransHeader; property: "y"; to: 5; duration: 150; easing.type: Easing.OutQuad }
+                                    }
+                                    PropertyAction { target: statusTransHeader; property: "y"; value: -5 }
+                                    ParallelAnimation {
+                                        NumberAnimation { target: statusTextHeader; property: "opacity"; to: 1; duration: 150; easing.type: Easing.InQuad }
+                                        NumberAnimation { target: statusTransHeader; property: "y"; to: 0; duration: 150; easing.type: Easing.InQuad }
+                                    }
+                                }
                             }
                         }
                     }
@@ -699,82 +753,72 @@ PluginComponent {
                         }
                     }
 
-                    // Refresh Button using DankButton with Custom Animation
-                    DankButton {
-                        id: refreshButton
+                    Item {
+                        id: refreshContainer
                         anchors.right: parent.right
                         anchors.rightMargin: Theme.spacingM
                         anchors.verticalCenter: parent.verticalCenter
-                        width: 40
-                        height: 40
-                        horizontalPadding: 0
-                        enableRipple: true
+                        width: 42
+                        height: 42
+                        scale: refreshArea.pressed ? 0.9 : (refreshArea.containsMouse ? 1.1 : 1.0)
+                        Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutBack } }
 
-                        // Custom animated icon inside DankButton
+                        MouseArea {
+                            id: refreshArea
+                            anchors.fill: parent
+                            hoverEnabled: !root.isLoading
+                            enabled: !root.isLoading
+                            cursorShape: root.isLoading ? Qt.ArrowCursor : Qt.PointingHandCursor
+                            onPressed: mouse => refreshRipple.trigger(mouse.x, mouse.y)
+                            onClicked: {
+                                if (root.isLoading) return;
+                                root.isLoading = true;
+                                root.fullScheduleData = [];
+                                root.updateScheduleData();
+                                root.triggerFetch("Fetching schedule...");
+                            }
+                        }
+
+                        Rectangle {
+                            anchors.fill: parent
+                            radius: Theme.cornerRadius
+                            color: refreshArea.containsMouse ? Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, 0.15) : Qt.rgba(Theme.surfaceContainer.r, Theme.surfaceContainer.g, Theme.surfaceContainer.b, 0.4)
+                            border.width: 1
+                            border.color: Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, refreshArea.containsMouse ? 0.3 : 0.15)
+                            Behavior on color { ColorAnimation { duration: 150 } }
+                            Behavior on border.color { ColorAnimation { duration: 150 } }
+                        }
+
                         DankIcon {
                             id: refreshIcon
-                            name: "refresh"
+                            name: root.isLoading ? "cached" : "refresh"
                             size: 22
-                            color: Theme.surfaceVariant
+                            color: Theme.primary
                             anchors.centerIn: parent
 
-                            // Continuous rotation when loading
-                            RotationAnimation {
-                                id: loadingRotation
-                                target: refreshIcon
-                                property: "rotation"
+                            SequentialAnimation {
+                                id: hoverSpinAnim
+                                running: refreshArea.containsMouse && !root.isLoading
+                                onStopped: refreshIcon.rotation = 0
+                                NumberAnimation { target: refreshIcon; property: "rotation"; from: 0; to: 45; duration: 200; easing.type: Easing.OutQuad }
+                                NumberAnimation { target: refreshIcon; property: "rotation"; from: 45; to: -45; duration: 400; easing.type: Easing.InOutQuad }
+                                NumberAnimation { target: refreshIcon; property: "rotation"; from: -45; to: 0; duration: 200; easing.type: Easing.InQuad }
+                            }
+
+                            RotationAnimation on rotation {
                                 from: 0
                                 to: 360
-                                duration: 1200
+                                duration: 1000
                                 loops: Animation.Infinite
                                 running: root.isLoading
                             }
-
-                            // Discrete rotation on hover
-                            RotationAnimation {
-                                id: hoverRotation
-                                target: refreshIcon
-                                property: "rotation"
-                                from: 0
-                                to: 360
-                                duration: 2400
-                                easing.type: Easing.OutQuart
-                            }
-
-                            // Rotation back to zero when hover ends
-                            RotationAnimation {
-                                id: resetRotation
-                                target: refreshIcon
-                                property: "rotation"
-                                from: 360
-                                to: 0
-                                duration: 1000
-                                easing.type: Easing.OutQuart
-                            }
                         }
 
-                        onHoveredChanged: {
-                            if (root.isLoading) return;
-                            if (hovered) {
-                                resetRotation.stop();
-                                hoverRotation.start();
-                            } else {
-                                hoverRotation.stop();
-                                resetRotation.start();
-                            }
-                        }
-
-                        onClicked: {
-                            if (root.isLoading) return;
-                            root.isLoading = true;
-                            // Ensure animations reset for loading state
-                            hoverRotation.stop();
-                            resetRotation.stop();
-                            refreshIcon.rotation = 0;
-                            
-                            root.fullScheduleData = []; // Clear current data instantly to show skeleton
-                            root.updateScheduleData();
-                            root.triggerFetch("Fetching schedule...");
+                        DankRipple {
+                            id: refreshRipple
+                            rippleColor: Theme.surfaceText
+                            cornerRadius: Theme.cornerRadius
+                            anchors.fill: parent
                         }
                     }
                 }
@@ -1330,8 +1374,10 @@ PluginComponent {
                                 width: parent.width
                                 height: parent.height - 40 - 16
                                 model: modelData.shows
-                                spacing: 0 // Using internal delegate lines
-                                clip: true
+                                 spacing: 0 // Using internal delegate lines
+                                 clip: true
+                                 topMargin: 4
+                                 bottomMargin: 4
 
                                 readonly property Item outerDelegate: dayDelegate
                                 readonly property int timelineX: dayColumn.timelineX
@@ -1452,9 +1498,9 @@ PluginComponent {
                                      width: innerListView.width
                                      height: (nowMarker.visible ? nowMarker.height : 0) + (gapLine.visible ? gapLine.height : 0) + cardRect.height - 1 // -1 matches Column spacing to avoid gaps
 
-                                     Column {
-                                         anchors.fill: parent
-                                         z: 1 // On top of the line
+                                      Column {
+                                          anchors.fill: parent
+                                          z: cardMouseArea.containsMouse ? 10 : 1 // Bring to front on hover
                                          spacing: -1 // Negative spacing to ensure lines overlap slightly and connect seamlessly
 
                                          // Now Marker
@@ -1547,22 +1593,59 @@ PluginComponent {
                                              z: -1
                                          }
 
-                                        Rectangle {
+                                        StyledRect {
                                             id: cardRect
                                             width: parent.width - 16 // Room for scrollbar
+                                            anchors.horizontalCenter: parent.horizontalCenter // Center to prevent clipping on edges
                                             height: 190
-                                            color: cardMouseArea.containsMouse ? Theme.withAlpha(Theme.surfaceVariant, 0.9) : Theme.withAlpha(Theme.surfaceContainer, 0.8)
+                                            color: Theme.withAlpha(Theme.surfaceContainerHigh, Theme.popupTransparency)
                                             radius: 20
-                                            border.width: 1
-                                            border.color: cardMouseArea.containsMouse ? Theme.primary : Theme.withAlpha(Theme.surfaceVariantText, 0.15)
+                                            
+                                            property bool hasStatus: modelData.libraryStatus !== "none" && modelData.libraryStatus !== "" && modelData.libraryStatus !== undefined
+                                            
+                                            property color statusColor: {
+                                                if (!hasStatus) return Theme.primary;
+                                                switch(modelData.libraryStatus) {
+                                                    case "watching": return "#4CAF50"; // Green
+                                                    case "rewatching": return "#4CAF50"; // Green
+                                                    case "completed": return "#6B89C9"; // Blue
+                                                    case "planning": return "#9C27B0"; // Purple
+                                                    case "considering": return "#FFC107"; // Gold/Yellow
+                                                    case "paused": return "#FE8E14"; // Orange
+                                                    case "dropped": return "#AC675D"; // Reddish-Brown
+                                                    case "skipping": return "#F44336"; // Red
+                                                    case "in-list": return Theme.primary;
+                                                    default: return Theme.primary;
+                                                }
+                                            }
 
-                                            Behavior on color { ColorAnimation { duration: Theme.shortDuration } }
-                                            Behavior on border.color { ColorAnimation { duration: Theme.shortDuration } }
+                                            border.width: 2
+                                            border.color: cardMouseArea.containsMouse 
+                                                ? Theme.withAlpha(statusColor, 0.7)
+                                                : Theme.withAlpha(Theme.surfaceVariantText, 0.15)
+
+                                            layer.enabled: true
+                                            layer.smooth: true
+                                            layer.effect: DropShadow {
+                                                transparentBorder: true
+                                                horizontalOffset: 0
+                                                verticalOffset: 3
+                                                radius: 12.0
+                                                samples: 24
+                                                color: Theme.withAlpha(Theme.shadowColor || "#000000", 0.35)
+                                            }
+
+                                            Behavior on border.color { ColorAnimation { duration: 200; easing.type: Easing.OutQuad } }
+                                            Behavior on border.width { NumberAnimation { duration: 200; easing.type: Easing.OutQuad } }
+                                            
+                                            scale: cardMouseArea.containsMouse ? 1.02 : 1.0
+                                            Behavior on scale { NumberAnimation { duration: 200; easing.type: Easing.OutQuad } }
 
                                             DankRipple {
                                                 id: cardRipple
                                                 cornerRadius: parent.radius
                                                 rippleColor: Theme.primary
+                                                anchors.fill: parent
                                             }
 
                                             MouseArea {
@@ -1656,20 +1739,7 @@ PluginComponent {
                                                           height: 24
                                                           Layout.alignment: Qt.AlignVCenter
 
-                                                          property color statusColor: {
-                                                                switch(modelData.libraryStatus) {
-                                                                    case "watching": return "#4CAF50"; // Green
-                                                                    case "rewatching": return "#4CAF50"; // Green
-                                                                    case "completed": return "#6B89C9"; // Blue
-                                                                    case "planning": return "#9C27B0"; // Purple
-                                                                    case "considering": return "#FFC107"; // Gold/Yellow
-                                                                    case "paused": return "#FE8E14"; // Orange
-                                                                    case "dropped": return "#AC675D"; // Reddish-Brown
-                                                                    case "skipping": return "#F44336"; // Red
-                                                                    case "in-list": return Theme.primary;
-                                                                    default: return Theme.surfaceVariantText;
-                                                                }
-                                                          }
+                                                          property color statusColor: cardRect.statusColor === "transparent" ? Theme.surfaceVariantText : cardRect.statusColor
 
                                                           property string iconName: modelData.libraryStatus === "none" ? "unmarked" : modelData.libraryStatus
 
