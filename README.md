@@ -52,6 +52,8 @@ Elegant implementation of the LiveChart.me Dankbar widget and slide-out panel, s
 
 ## Installation
 
+<div align="left">
+
 ### Standard Linux
 Ensure you have Python 3 and the required dependencies installed:
 
@@ -133,6 +135,8 @@ Alternatively you can make the dependencies available system-wide (for example i
   ```
 
 </details>
+
+</div>
 
 ## Contributing
 
