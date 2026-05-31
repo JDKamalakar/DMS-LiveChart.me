@@ -7,8 +7,8 @@ import qs.Common
 import qs.Widgets
 import qs.Modules.Plugins
 
-// Required for OpacityMask rounding
-import Qt5Compat.GraphicalEffects
+// Required for MultiEffect rounding and shadow
+import QtQuick.Effects
 
 PluginComponent {
     id: root
@@ -406,10 +406,11 @@ PluginComponent {
                     visible: false
                 }
                 
-                ColorOverlay {
+                MultiEffect {
                     anchors.fill: horizLiveChartLogo
                     source: horizLiveChartLogo
-                    color: Theme.widgetTextColor
+                    colorization: 1.0
+                    colorizationColor: Theme.widgetTextColor
                 }
             }
             Rectangle {
@@ -488,10 +489,11 @@ PluginComponent {
                     visible: false
                 }
                 
-                ColorOverlay {
+                MultiEffect {
                     anchors.fill: vertLiveChartLogo
                     source: vertLiveChartLogo
-                    color: Theme.widgetTextColor
+                    colorization: 1.0
+                    colorizationColor: Theme.widgetTextColor
                 }
             }
             StyledText {
@@ -526,16 +528,6 @@ PluginComponent {
                         color: Theme.withAlpha(Theme.surfaceContainerHigh, Theme.popupTransparency)
                         border.width: 1
                         border.color: Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, 0.15)
-
-                        layer.enabled: true
-                        layer.effect: DropShadow {
-                            transparentBorder: true
-                            horizontalOffset: 0
-                            verticalOffset: 3
-                            radius: 12.0
-                            samples: 24
-                            color: Theme.withAlpha(Theme.shadowColor || "#000000", 0.35)
-                        }
                     }
 
                     Row {
@@ -1623,18 +1615,6 @@ PluginComponent {
                                             border.color: cardMouseArea.containsMouse 
                                                 ? Theme.withAlpha(statusColor, 0.7)
                                                 : Theme.withAlpha(Theme.surfaceVariantText, 0.15)
-
-                                            layer.enabled: true
-                                            layer.smooth: true
-                                            layer.effect: DropShadow {
-                                                transparentBorder: true
-                                                horizontalOffset: 0
-                                                verticalOffset: 3
-                                                radius: 12.0
-                                                samples: 24
-                                                color: Theme.withAlpha(Theme.shadowColor || "#000000", 0.35)
-                                            }
-
                                             Behavior on border.color { ColorAnimation { duration: 200; easing.type: Easing.OutQuad } }
                                             Behavior on border.width { NumberAnimation { duration: 200; easing.type: Easing.OutQuad } }
                                             
@@ -1838,21 +1818,28 @@ PluginComponent {
                                                             id: coverMask
                                                             anchors.fill: parent
                                                             radius: 12
+                                                            color: "white"
                                                             visible: false
+                                                            layer.enabled: true
                                                         }
 
                                                         Item {
+                                                            id: coverImgSrc
                                                             anchors.fill: parent
+                                                            visible: false
                                                             layer.enabled: true
-                                                            layer.effect: OpacityMask {
-                                                                maskSource: coverMask
-                                                            }
-
                                                             Image {
                                                                 anchors.fill: parent
                                                                 source: modelData.image || ""
                                                                 fillMode: Image.PreserveAspectCrop
                                                             }
+                                                        }
+
+                                                        MultiEffect {
+                                                            anchors.fill: parent
+                                                            source: coverImgSrc
+                                                            maskEnabled: true
+                                                            maskSource: coverMask
                                                         }
 
                                                         // Cover Image MouseArea
@@ -1895,16 +1882,17 @@ PluginComponent {
                                                                 anchors.fill: parent
                                                                 anchors.margins: 4
                                                                 radius: width / 2
+                                                                color: "white"
                                                                 visible: false
+                                                                layer.enabled: true
                                                             }
 
                                                             Item {
+                                                                id: watchIconSrc
                                                                 anchors.fill: parent
                                                                 anchors.margins: 4
+                                                                visible: false
                                                                 layer.enabled: true
-                                                                layer.effect: OpacityMask {
-                                                                    maskSource: watchIconMask
-                                                                }
 
                                                                 Image {
                                                                     id: watchIcon
@@ -1913,6 +1901,14 @@ PluginComponent {
                                                                     source: modelData.sourceIcon || (modelData.siteDomain ? "https://www.google.com/s2/favicons?domain=" + modelData.siteDomain + "&sz=64" : "")
                                                                     visible: source.toString() !== ""
                                                                 }
+                                                            }
+
+                                                            MultiEffect {
+                                                                anchors.fill: watchIconSrc
+                                                                source: watchIconSrc
+                                                                maskEnabled: true
+                                                                maskSource: watchIconMask
+                                                                visible: watchIcon.source.toString() !== ""
                                                             }
 
                                                             DankIcon {
