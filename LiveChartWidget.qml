@@ -397,15 +397,17 @@ PluginComponent {
         Row {
             spacing: Theme.spacingS
             Item {
-                width: root.iconSize
-                height: root.iconSize
+                readonly property int iconSz: Math.min(root.iconSize, 20)
+                width: iconSz
+                height: iconSz
                 anchors.verticalCenter: parent.verticalCenter
                 
                 Image {
                     id: horizLiveChartLogo
                     source: root.isDarkTheme ? "assets/LiveChart_White.svg" : "assets/LiveChart.svg"
-                    anchors.fill: parent
-                    anchors.margins: 4
+                    width: parent.iconSz
+                    height: parent.iconSz
+                    anchors.centerIn: parent
                     fillMode: Image.PreserveAspectFit
                     sourceSize: Qt.size(64, 64)
                     smooth: true
@@ -474,15 +476,17 @@ PluginComponent {
         Column {
             spacing: 4
             Item {
-                width: root.iconSize
-                height: root.iconSize
+                readonly property int iconSz: Math.min(root.iconSize, 20)
+                width: iconSz
+                height: iconSz
                 anchors.horizontalCenter: parent.horizontalCenter
                 
                 Image {
                     id: vertLiveChartLogo
                     source: root.isDarkTheme ? "assets/LiveChart_White.svg" : "assets/LiveChart.svg"
-                    anchors.fill: parent
-                    anchors.margins: 4
+                    width: parent.iconSz
+                    height: parent.iconSz
+                    anchors.centerIn: parent
                     fillMode: Image.PreserveAspectFit
                     sourceSize: Qt.size(64, 64)
                     smooth: true
