@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import QtQuick.Window
 import Quickshell
 import Quickshell.Io
 
@@ -46,6 +47,9 @@ PluginComponent {
     property string dynamicDisplayMode: "next" // toggles between next and recent
     property int daysToShow: parseInt(pluginData.daysToShow || "7", 10)
     property int startDayOffset: parseInt(pluginData.startDay || "0", 10)
+
+    // Calculate theme mode dynamically
+    readonly property bool isDarkTheme: (Theme.surface.r * 0.299 + Theme.surface.g * 0.587 + Theme.surface.b * 0.114) < 0.5
 
     // Handle settings changes from pluginData
     onPluginDataChanged: {
@@ -209,7 +213,7 @@ PluginComponent {
     }
 
     // Standard DMS widget capability popout styling
-    popoutWidth: Math.max(400, 300 * root.daysToShow) // Dynamically resize width per day
+    popoutWidth: Math.min(Screen.width ? Screen.width - 64 : 1200, Math.max(400, 300 * root.daysToShow)) // Dynamically resize width per day but prevent clipping
 
     Timer {
         id: updateTimer
@@ -399,18 +403,12 @@ PluginComponent {
                 
                 Image {
                     id: horizLiveChartLogo
-                    source: "assets/LiveChart.svg"
+                    source: root.isDarkTheme ? "assets/LiveChart_White.svg" : "assets/LiveChart.svg"
                     anchors.fill: parent
+                    anchors.margins: 4
+                    fillMode: Image.PreserveAspectFit
                     sourceSize: Qt.size(64, 64)
                     smooth: true
-                    visible: false
-                }
-                
-                MultiEffect {
-                    anchors.fill: horizLiveChartLogo
-                    source: horizLiveChartLogo
-                    colorization: 1.0
-                    colorizationColor: Theme.widgetTextColor
                 }
             }
             Rectangle {
@@ -482,18 +480,12 @@ PluginComponent {
                 
                 Image {
                     id: vertLiveChartLogo
-                    source: "assets/LiveChart.svg"
+                    source: root.isDarkTheme ? "assets/LiveChart_White.svg" : "assets/LiveChart.svg"
                     anchors.fill: parent
+                    anchors.margins: 4
+                    fillMode: Image.PreserveAspectFit
                     sourceSize: Qt.size(64, 64)
                     smooth: true
-                    visible: false
-                }
-                
-                MultiEffect {
-                    anchors.fill: vertLiveChartLogo
-                    source: vertLiveChartLogo
-                    colorization: 1.0
-                    colorizationColor: Theme.widgetTextColor
                 }
             }
             StyledText {
@@ -1991,7 +1983,7 @@ PluginComponent {
                                                 anchors.centerIn: parent
                                                 name: "check"
                                                 size: 14
-                                                color: Theme.isDark ? Theme.primary : "black"
+                                                color: root.isDarkTheme ? Theme.primary : "black"
                                             }
 
                                             DankRipple {
