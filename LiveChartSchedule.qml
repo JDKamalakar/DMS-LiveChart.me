@@ -59,8 +59,8 @@ Item {
                         color: iconMA.containsMouse ? Theme.withAlpha(Theme.primary, 0.2) : Theme.withAlpha(Theme.primary, 0.1)
                         border.width: 1
                         border.color: iconMA.containsMouse ? Theme.primary : "transparent"
-                        Behavior on color { ColorAnimation { duration: Theme.shortDuration } }
-                        Behavior on border.color { ColorAnimation { duration: Theme.shortDuration } }
+                        Behavior on color { ColorAnimation { duration: 150 } }
+                        Behavior on border.color { ColorAnimation { duration: 150 } }
                     }
 
                     DankRipple {
@@ -130,45 +130,30 @@ Item {
                         property bool isLast: index === 4
                         property bool isTodayAtDefault: (modelData.isTodayBtn === true) && (widgetRoot.startDayOffset === parseInt(widgetRoot.pluginData.startDay || "0", 10))
                         
-                        width: Math.max(btnText.implicitWidth + Theme.spacingL * 2, 64) + (isTodayAtDefault ? 4 : 0)
+                        width: Math.max(0, Math.max(btnText.implicitWidth + Theme.spacingL * 2, 64) + (isTodayAtDefault ? 4 : 0))
                         height: 40
                         
-                        // Pure base color mimicking DankButtonGroup default
-                        color: isTodayAtDefault ? Theme.primary : Theme.surfaceVariant
+                        color: isTodayAtDefault ? Theme.withAlpha(Theme.primary, 0.18) : (navHover.containsMouse ? Theme.withAlpha(Theme.primary, 0.10) : Theme.withAlpha(Theme.secondary, 0.04))
+                        border.width: 1
+                        border.color: isTodayAtDefault ? Theme.withAlpha(Theme.primary, 0.60) : (navHover.containsMouse ? Theme.withAlpha(Theme.primary, 0.40) : Theme.withAlpha(Theme.secondary, 0.15))
                         
-                        topLeftRadius: (isFirst || isTodayAtDefault) ? Theme.cornerRadius : Math.min(4, Theme.cornerRadius)
-                        bottomLeftRadius: (isFirst || isTodayAtDefault) ? Theme.cornerRadius : Math.min(4, Theme.cornerRadius)
-                        topRightRadius: (isLast || isTodayAtDefault) ? Theme.cornerRadius : Math.min(4, Theme.cornerRadius)
-                        bottomRightRadius: (isLast || isTodayAtDefault) ? Theme.cornerRadius : Math.min(4, Theme.cornerRadius)
+                        topLeftRadius: isTodayAtDefault ? (height / 2) : (isFirst ? Theme.cornerRadius : Math.min(4, Theme.cornerRadius))
+                        bottomLeftRadius: isTodayAtDefault ? (height / 2) : (isFirst ? Theme.cornerRadius : Math.min(4, Theme.cornerRadius))
+                        topRightRadius: isTodayAtDefault ? (height / 2) : (isLast ? Theme.cornerRadius : Math.min(4, Theme.cornerRadius))
+                        bottomRightRadius: isTodayAtDefault ? (height / 2) : (isLast ? Theme.cornerRadius : Math.min(4, Theme.cornerRadius))
                         
-                        Behavior on width { enabled: true; NumberAnimation { duration: Theme.shortDuration; easing.type: Theme.standardEasing } }
-                        Behavior on topLeftRadius { enabled: true; NumberAnimation { duration: Theme.shortDuration; easing.type: Theme.standardEasing } }
-                        Behavior on bottomLeftRadius { enabled: true; NumberAnimation { duration: Theme.shortDuration; easing.type: Theme.standardEasing } }
-                        Behavior on topRightRadius { enabled: true; NumberAnimation { duration: Theme.shortDuration; easing.type: Theme.standardEasing } }
-                        Behavior on bottomRightRadius { enabled: true; NumberAnimation { duration: Theme.shortDuration; easing.type: Theme.standardEasing } }
-                        Behavior on color { ColorAnimation { duration: Theme.shortDuration; easing.type: Theme.standardEasing } }
-                        
-                        // Overlay stateLayer directly extracted from DankButtonGroup source code 
-                        // perfectly enforcing standardized interaction highlights.
-                        Rectangle {
-                            id: stateLayer
-                            anchors.fill: parent
-                            topLeftRadius: parent.topLeftRadius
-                            bottomLeftRadius: parent.bottomLeftRadius
-                            topRightRadius: parent.topRightRadius
-                            bottomRightRadius: parent.bottomRightRadius
-                            color: {
-                                if (navHover.pressed) return isTodayAtDefault ? Theme.buttonPressed : Theme.surfaceTextHover;
-                                if (navHover.containsMouse) return isTodayAtDefault ? Theme.buttonHover : Theme.surfaceTextHover;
-                                return "transparent";
-                            }
-                            Behavior on color { ColorAnimation { duration: Theme.shorterDuration; easing.type: Theme.standardEasing } }
-                        }
+                        Behavior on width { enabled: true; NumberAnimation { duration: 150; easing.type: Easing.OutExpo } }
+                        Behavior on topLeftRadius { enabled: true; NumberAnimation { duration: 600; easing.type: Easing.OutExpo } }
+                        Behavior on bottomLeftRadius { enabled: true; NumberAnimation { duration: 600; easing.type: Easing.OutExpo } }
+                        Behavior on topRightRadius { enabled: true; NumberAnimation { duration: 600; easing.type: Easing.OutExpo } }
+                        Behavior on bottomRightRadius { enabled: true; NumberAnimation { duration: 600; easing.type: Easing.OutExpo } }
+                        Behavior on color { ColorAnimation { duration: 150 } }
+                        Behavior on border.color { ColorAnimation { duration: 150 } }
                         
                         DankRipple {
                             id: navRipple
-                            cornerRadius: isFirst || isLast || isTodayAtDefault ? Theme.cornerRadius : Math.min(4, Theme.cornerRadius)
-                            rippleColor: isTodayAtDefault ? Theme.onPrimary : Theme.surfaceVariantText
+                            cornerRadius: isTodayAtDefault ? (parent.height / 2) : (isFirst || isLast ? Theme.cornerRadius : Math.min(4, Theme.cornerRadius))
+                            rippleColor: Theme.primary
                         }
                         
                         Item {
@@ -179,17 +164,17 @@ Item {
                                 text: modelData.text
                                 font.pixelSize: Theme.fontSizeMedium
                                 anchors.centerIn: parent
-                                color: isTodayAtDefault ? "#FFFFFF" : Theme.surfaceVariantText
+                                color: isTodayAtDefault ? Theme.primary : Theme.surfaceVariantText
                                 font.weight: isTodayAtDefault ? Font.Medium : Font.Normal
                                 
                                 // Tactile scale zoom exclusively for the Today anchor
                                 scale: (navHover.containsMouse && modelData.isTodayBtn) ? 1.1 : 1.0
-                                Behavior on scale { NumberAnimation { duration: 200; easing.type: Easing.OutBack } }
+                                Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutBack } }
                                 
                                 transform: Translate {
                                     id: iconTranslate
                                     x: 0
-                                    Behavior on x { NumberAnimation { duration: 200; easing.type: Easing.OutBack } }
+                                    Behavior on x { NumberAnimation { duration: 150; easing.type: Easing.OutBack } }
                                 }
                             }
                         }
@@ -229,6 +214,17 @@ Item {
                 height: 40
                 horizontalPadding: 0
                 enableRipple: true
+                radius: widgetRoot.isLoading ? (height / 2) : Theme.cornerRadius
+                Behavior on radius { NumberAnimation { duration: 600; easing.type: Easing.OutExpo } }
+
+                Connections {
+                    target: widgetRoot
+                    function onIsLoadingChanged() {
+                        if (!widgetRoot.isLoading) {
+                            refreshIcon.rotation = 0;
+                        }
+                    }
+                }
 
                 // Custom animated icon inside DankButton
                 DankIcon {
@@ -329,43 +325,30 @@ Item {
                         property bool isLast: index === 4
                         property bool isTodayAtDefault: (modelData.isTodayBtn === true) && (widgetRoot.startDayOffset === parseInt(widgetRoot.pluginData.startDay || "0", 10))
                         
-                        width: Math.max(btnTextStandalone.implicitWidth + Theme.spacingL * 2, 64) + (isTodayAtDefault ? 4 : 0)
+                        width: Math.max(0, Math.max(btnTextStandalone.implicitWidth + Theme.spacingL * 2, 64) + (isTodayAtDefault ? 4 : 0))
                         height: 40
                         
-                        // Pure base color mirroring DankButtonGroup default
-                        color: isTodayAtDefault ? Theme.primary : Theme.surfaceVariant
+                        color: isTodayAtDefault ? Theme.withAlpha(Theme.primary, 0.18) : (navHoverStandalone.containsMouse ? Theme.withAlpha(Theme.primary, 0.10) : Theme.withAlpha(Theme.secondary, 0.04))
+                        border.width: 1
+                        border.color: isTodayAtDefault ? Theme.withAlpha(Theme.primary, 0.60) : (navHoverStandalone.containsMouse ? Theme.withAlpha(Theme.primary, 0.40) : Theme.withAlpha(Theme.secondary, 0.15))
                         
-                        topLeftRadius: (isFirst || isTodayAtDefault) ? Theme.cornerRadius : Math.min(4, Theme.cornerRadius)
-                        bottomLeftRadius: (isFirst || isTodayAtDefault) ? Theme.cornerRadius : Math.min(4, Theme.cornerRadius)
-                        topRightRadius: (isLast || isTodayAtDefault) ? Theme.cornerRadius : Math.min(4, Theme.cornerRadius)
-                        bottomRightRadius: (isLast || isTodayAtDefault) ? Theme.cornerRadius : Math.min(4, Theme.cornerRadius)
+                        topLeftRadius: isTodayAtDefault ? (height / 2) : (isFirst ? Theme.cornerRadius : Math.min(4, Theme.cornerRadius))
+                        bottomLeftRadius: isTodayAtDefault ? (height / 2) : (isFirst ? Theme.cornerRadius : Math.min(4, Theme.cornerRadius))
+                        topRightRadius: isTodayAtDefault ? (height / 2) : (isLast ? Theme.cornerRadius : Math.min(4, Theme.cornerRadius))
+                        bottomRightRadius: isTodayAtDefault ? (height / 2) : (isLast ? Theme.cornerRadius : Math.min(4, Theme.cornerRadius))
                         
-                        Behavior on width { enabled: true; NumberAnimation { duration: Theme.shortDuration; easing.type: Theme.standardEasing } }
-                        Behavior on topLeftRadius { enabled: true; NumberAnimation { duration: Theme.shortDuration; easing.type: Theme.standardEasing } }
-                        Behavior on bottomLeftRadius { enabled: true; NumberAnimation { duration: Theme.shortDuration; easing.type: Theme.standardEasing } }
-                        Behavior on topRightRadius { enabled: true; NumberAnimation { duration: Theme.shortDuration; easing.type: Theme.standardEasing } }
-                        Behavior on bottomRightRadius { enabled: true; NumberAnimation { duration: Theme.shortDuration; easing.type: Theme.standardEasing } }
-                        Behavior on color { ColorAnimation { duration: Theme.shortDuration; easing.type: Theme.standardEasing } }
-                        
-                        Rectangle {
-                            id: stateLayerStandalone
-                            anchors.fill: parent
-                            topLeftRadius: parent.topLeftRadius
-                            bottomLeftRadius: parent.bottomLeftRadius
-                            topRightRadius: parent.topRightRadius
-                            bottomRightRadius: parent.bottomRightRadius
-                            color: {
-                                if (navHoverStandalone.pressed) return isTodayAtDefault ? Theme.buttonPressed : Theme.surfaceTextHover;
-                                if (navHoverStandalone.containsMouse) return isTodayAtDefault ? Theme.buttonHover : Theme.surfaceTextHover;
-                                return "transparent";
-                            }
-                            Behavior on color { ColorAnimation { duration: Theme.shorterDuration; easing.type: Theme.standardEasing } }
-                        }
+                        Behavior on width { enabled: true; NumberAnimation { duration: 150; easing.type: Easing.OutExpo } }
+                        Behavior on topLeftRadius { enabled: true; NumberAnimation { duration: 600; easing.type: Easing.OutExpo } }
+                        Behavior on bottomLeftRadius { enabled: true; NumberAnimation { duration: 600; easing.type: Easing.OutExpo } }
+                        Behavior on topRightRadius { enabled: true; NumberAnimation { duration: 600; easing.type: Easing.OutExpo } }
+                        Behavior on bottomRightRadius { enabled: true; NumberAnimation { duration: 600; easing.type: Easing.OutExpo } }
+                        Behavior on color { ColorAnimation { duration: 150 } }
+                        Behavior on border.color { ColorAnimation { duration: 150 } }
                         
                         DankRipple {
                             id: navRippleStandalone
-                            cornerRadius: isFirst || isLast || isTodayAtDefault ? Theme.cornerRadius : Math.min(4, Theme.cornerRadius)
-                            rippleColor: isTodayAtDefault ? Theme.onPrimary : Theme.surfaceVariantText
+                            cornerRadius: isTodayAtDefault ? (parent.height / 2) : (isFirst || isLast ? Theme.cornerRadius : Math.min(4, Theme.cornerRadius))
+                            rippleColor: Theme.primary
                         }
                         
                         Item {
@@ -376,16 +359,16 @@ Item {
                                 text: modelData.text
                                 font.pixelSize: Theme.fontSizeMedium
                                 anchors.centerIn: parent
-                                color: isTodayAtDefault ? "#FFFFFF" : Theme.surfaceVariantText
+                                color: isTodayAtDefault ? Theme.primary : Theme.surfaceVariantText
                                 font.weight: isTodayAtDefault ? Font.Medium : Font.Normal
                                 
                                 scale: (navHoverStandalone.containsMouse && modelData.isTodayBtn) ? 1.1 : 1.0
-                                Behavior on scale { NumberAnimation { duration: 200; easing.type: Easing.OutBack } }
+                                Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutBack } }
                                 
                                 transform: Translate {
                                     id: iconTranslateStandalone
                                     x: 0
-                                    Behavior on x { NumberAnimation { duration: 200; easing.type: Easing.OutBack } }
+                                    Behavior on x { NumberAnimation { duration: 150; easing.type: Easing.OutBack } }
                                 }
                             }
                         }
@@ -428,7 +411,7 @@ Item {
                 model: widgetRoot.daysToShow
                 
                 Column {
-                    width: (skeletonLoader.width - (skeletonLoader.spacing * Math.max(0, widgetRoot.daysToShow - 1))) / widgetRoot.daysToShow
+                    width: Math.max(0, (skeletonLoader.width - (skeletonLoader.spacing * Math.max(0, widgetRoot.daysToShow - 1))) / widgetRoot.daysToShow)
                     height: parent.height
                     spacing: 0
                     
@@ -461,7 +444,7 @@ Item {
                             Rectangle {
                                 anchors.top: parent.top
                                 anchors.topMargin: 16
-                                width: parent.width - 16 // Accurately reserves 16px scrollbar gutter
+                                width: Math.max(0, parent.width - 16) // Accurately reserves 16px scrollbar gutter
                                 height: 190
                                 radius: 20
                                 color: Theme.withAlpha(Theme.surfaceVariantText, 0.1)
@@ -506,7 +489,7 @@ Item {
             
             delegate: Item {
                 id: dayDelegate
-                width: (ListView.view.width - (ListView.view.spacing * Math.max(0, widgetRoot.daysToShow - 1))) / widgetRoot.daysToShow
+                width: Math.max(0, (ListView.view.width - (ListView.view.spacing * Math.max(0, widgetRoot.daysToShow - 1))) / widgetRoot.daysToShow)
                 height: ListView.view.height
                 
                 property int dayIndex: index
@@ -528,7 +511,7 @@ Item {
                         property bool isToday: dayDelegate.isToday
                         
                         color: isToday ? Theme.withAlpha(Theme.buttonBg, 0.7) : Theme.withAlpha(Theme.surfaceVariant, 0.5)
-                        Behavior on color { ColorAnimation { duration: Theme.shortDuration; easing.type: Theme.standardEasing } }
+                        Behavior on color { ColorAnimation { duration: 150; easing.type: Theme.standardEasing } }
                         
                         // Selective corner rounding for pill effect
                         property int edgeRadius: Theme.cornerRadius
@@ -563,7 +546,7 @@ Item {
                                 if (headerMouse.containsMouse) return headerSegment.isToday ? Theme.buttonHover : Theme.surfaceTextHover;
                                 return "transparent";
                             }
-                            Behavior on color { ColorAnimation { duration: Theme.shorterDuration; easing.type: Theme.standardEasing } }
+                            Behavior on color { ColorAnimation { duration: 150; easing.type: Theme.standardEasing } }
                         }
 
                         DankRipple {
@@ -726,7 +709,7 @@ Item {
                                          }
                                          color: Theme.buttonText
                                          font.bold: true
-                                         font.pixelSize: 10
+                                         font.pixelSize: Theme.fontSizeSmall
                                      }
                                  }
                              }
@@ -813,7 +796,7 @@ Item {
                                              }
                                              color: Theme.buttonText
                                              font.bold: true
-                                             font.pixelSize: 12
+                                             font.pixelSize: Theme.fontSizeSmall
                                          }
                                      }
                                  }
@@ -833,15 +816,15 @@ Item {
 
                                 Rectangle {
                                     id: cardRect
-                                    width: parent.width - 16 // Room for scrollbar
+                                    width: Math.max(0, parent.width - 16) // Room for scrollbar
                                     height: 190
                                     color: cardMouseArea.containsMouse ? Theme.withAlpha(Theme.surfaceVariant, 0.9) : Theme.withAlpha(Theme.surfaceContainer, 0.8)
                                     radius: 20
                                     border.width: 1
                                     border.color: cardMouseArea.containsMouse ? Theme.primary : Theme.withAlpha(Theme.surfaceVariantText, 0.15)
 
-                                    Behavior on color { ColorAnimation { duration: Theme.shortDuration } }
-                                    Behavior on border.color { ColorAnimation { duration: Theme.shortDuration } }
+                                    Behavior on color { ColorAnimation { duration: 150 } }
+                                    Behavior on border.color { ColorAnimation { duration: 150 } }
 
                                     DankRipple {
                                         id: cardRipple
@@ -900,7 +883,7 @@ Item {
                                                         }
                                                         return modelData.time;
                                                     }
-                                                    font.pixelSize: 9
+                                                    font.pixelSize: Theme.fontSizeSmall
                                                     font.weight: Font.Black
                                                     font.capitalization: Font.AllUppercase
                                                     color: dayDelegate.isToday ? Theme.buttonText : Theme.surfaceVariantText
@@ -910,7 +893,7 @@ Item {
                                             StyledText {
                                                 id: countdownText
                                                 text: modelData.countdown
-                                                font.pixelSize: 12
+                                                font.pixelSize: Theme.fontSizeSmall
                                                 color: Theme.surfaceVariantText
                                                 opacity: 0.6
                                                 Layout.fillWidth: true
@@ -1251,6 +1234,7 @@ Item {
         id: settingsLoader
         anchors.fill: parent
         active: showSettingsMenu
+        asynchronous: true
         sourceComponent: settingsComponent
     }
 

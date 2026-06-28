@@ -38,7 +38,7 @@ PluginSettings {
                 spacing: Theme.spacingM
                 DankIcon { name: "view_day"; size: 22; anchors.verticalCenter: parent.verticalCenter; opacity: 0.8 }
                 SelectionSetting {
-                    width: parent.width - 22 - Theme.spacingM
+                    width: Math.max(0, parent.width - 22 - Theme.spacingM)
                     settingKey: "dankbarPill"
                     label: "Horizontal Pill Mode"
                     description: "What information to show in the Dankbar pill."
@@ -58,7 +58,7 @@ PluginSettings {
                 spacing: Theme.spacingM
                 DankIcon { name: "format_list_numbered"; size: 22; anchors.verticalCenter: parent.verticalCenter; opacity: 0.8 }
                 SelectionSetting {
-                    width: parent.width - 22 - Theme.spacingM
+                    width: Math.max(0, parent.width - 22 - Theme.spacingM)
                     settingKey: "dankbarLimit"
                     label: "Pill Limit"
                     description: "How many shows to display in Next / Recent modes."
@@ -113,7 +113,7 @@ PluginSettings {
                 spacing: Theme.spacingM
                 DankIcon { name: "cookie"; size: 22; anchors.verticalCenter: parent.verticalCenter; opacity: 0.8 }
                 SelectionSetting {
-                    width: parent.width - 22 - Theme.spacingM
+                    width: Math.max(0, parent.width - 22 - Theme.spacingM)
                     settingKey: "browser"
                     label: "Browser Session"
                     description: "Which browser's cookies to use for authentication and filtering."
@@ -132,7 +132,7 @@ PluginSettings {
                 spacing: Theme.spacingM
                 DankIcon { name: "schedule"; size: 22; anchors.verticalCenter: parent.verticalCenter; opacity: 0.8 }
                 SelectionSetting {
-                    width: parent.width - 22 - Theme.spacingM
+                    width: Math.max(0, parent.width - 22 - Theme.spacingM)
                     settingKey: "timeFormat"
                     label: "Time Format"
                     description: "Choose between 12-hour and 24-hour time display."
@@ -149,7 +149,7 @@ PluginSettings {
                 spacing: Theme.spacingM
                 DankIcon { name: "timer"; size: 22; anchors.verticalCenter: parent.verticalCenter; opacity: 0.8 }
                 ToggleSetting {
-                    width: parent.width - 22 - Theme.spacingM
+                    width: Math.max(0, parent.width - 22 - Theme.spacingM)
                     settingKey: "showSeconds"
                     label: "Show Seconds"
                     description: "Display seconds in the current time highlighter."
@@ -162,7 +162,7 @@ PluginSettings {
                 spacing: Theme.spacingM
                 DankIcon { name: "refresh"; size: 22; anchors.verticalCenter: parent.verticalCenter; opacity: 0.8 }
                 Column {
-                    width: parent.width - 22 - Theme.spacingM
+                    width: Math.max(0, parent.width - 22 - Theme.spacingM)
                     spacing: Theme.spacingXS
 
                     StyledText {
@@ -188,7 +188,7 @@ PluginSettings {
 
                 StringSetting {
                     id: intervalValueSetting
-                    width: parent.width * 0.5 - Theme.spacingM / 2
+                    width: Math.max(0, parent.width * 0.5 - Theme.spacingM / 2)
                     settingKey: "updateIntervalValue"
                     label: ""
                     description: ""
@@ -198,7 +198,7 @@ PluginSettings {
 
                 SelectionSetting {
                     id: intervalUnitSetting
-                    width: parent.width * 0.5 - Theme.spacingM / 2
+                    width: Math.max(0, parent.width * 0.5 - Theme.spacingM / 2)
                     settingKey: "updateIntervalUnit"
                     label: ""
                     description: ""
@@ -245,7 +245,7 @@ PluginSettings {
                 spacing: Theme.spacingM
                 DankIcon { name: "calendar_view_week"; size: 22; anchors.verticalCenter: parent.verticalCenter; opacity: 0.8 }
                 SelectionSetting {
-                    width: parent.width - 22 - Theme.spacingM
+                    width: Math.max(0, parent.width - 22 - Theme.spacingM)
                     settingKey: "daysToShow"
                     label: "Days to Show"
                     description: "Number of days of schedule to display."
@@ -265,7 +265,7 @@ PluginSettings {
                 spacing: Theme.spacingM
                 DankIcon { name: "event"; size: 22; anchors.verticalCenter: parent.verticalCenter; opacity: 0.8 }
                 SelectionSetting {
-                    width: parent.width - 22 - Theme.spacingM
+                    width: Math.max(0, parent.width - 22 - Theme.spacingM)
                     settingKey: "startDay"
                     label: "Start Day"
                     description: "Which day the schedule should start from."
@@ -284,7 +284,7 @@ PluginSettings {
                 spacing: Theme.spacingM
                 DankIcon { name: "touch_app"; size: 22; anchors.verticalCenter: parent.verticalCenter; opacity: 0.8 }
                 SelectionSetting {
-                    width: parent.width - 22 - Theme.spacingM
+                    width: Math.max(0, parent.width - 22 - Theme.spacingM)
                     settingKey: "cardClickAction"
                     label: "Anime Card"
                     description: "Action when clicking the background of an anime card."
@@ -302,7 +302,7 @@ PluginSettings {
                 spacing: Theme.spacingM
                 DankIcon { name: "image"; size: 22; anchors.verticalCenter: parent.verticalCenter; opacity: 0.8 }
                 SelectionSetting {
-                    width: parent.width - 22 - Theme.spacingM
+                    width: Math.max(0, parent.width - 22 - Theme.spacingM)
                     settingKey: "coverTitleClickAction"
                     label: "Cover"
                     description: "Action when clicking the cover image of an anime."
@@ -319,7 +319,7 @@ PluginSettings {
                 spacing: Theme.spacingM
                 DankIcon { name: "link"; size: 22; anchors.verticalCenter: parent.verticalCenter; opacity: 0.8 }
                 SelectionSetting {
-                    width: parent.width - 22 - Theme.spacingM
+                    width: Math.max(0, parent.width - 22 - Theme.spacingM)
                     settingKey: "watchStreamClickAction"
                     label: "Watch Stream"
                     description: "Action when clicking the source favicon/link."
@@ -336,7 +336,7 @@ PluginSettings {
                 spacing: Theme.spacingM
                 DankIcon { name: "home"; size: 22; anchors.verticalCenter: parent.verticalCenter; opacity: 0.8 }
                 SelectionSetting {
-                    width: parent.width - 22 - Theme.spacingM
+                    width: Math.max(0, parent.width - 22 - Theme.spacingM)
                     settingKey: "livechartIconClickAction"
                     label: "LiveChart.me Icon"
                     description: "Action when clicking the top LiveChart logo."
