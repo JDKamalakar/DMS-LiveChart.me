@@ -1,9 +1,9 @@
 {
     "id": "liveChartSchedule",
     "name": "LiveChart Schedule",
-    "description": "Displays LiveChart anime schedule data pulled from a local browser session.",
+    "description": "Displays LiveChart anime schedule data. Inspects local browser cookies (Firefox/Zen/Chrome) to sync watchlist.",
     "category": "utilities",
-    "version": "1.1.7",
+    "version": "1.1.8",
     "author": "JDKamalakar",
     "icon": "view_timeline",
     "type": "widget",
@@ -21,7 +21,9 @@
     ],
     "dependencies": [
         "python3",
-        "browser_cookie3"
+        "beautifulsoup4",
+        "browser-cookie3",
+        "keyring"
     ],
     "screenshot": "https://raw.githubusercontent.com/JDKamalakar/DMS-LiveChart.me/refs/heads/main/assets/POP-Up_UI.png",
     "permissions": [
