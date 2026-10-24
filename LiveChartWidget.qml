@@ -3,9 +3,11 @@ import QtQuick.Layouts
 import QtQuick.Window
 import Quickshell
 import Quickshell.Io
+import Quickshell.Services.UPower
 
 import qs.Common
 import qs.Widgets
+import qs.DCommon.Widgets
 import qs.Modules.Plugins
 
 // Required for MultiEffect rounding and shadow
@@ -20,20 +22,15 @@ PluginComponent {
     property int updateIntervalMs: {
         let val = parseFloat(pluginData.updateIntervalValue || "1");
         let unit = pluginData.updateIntervalUnit || "h";
+        let ms = 3600000;
         
-        // Logical fallback for legacy settings
-        if (!pluginData.updateIntervalValue && pluginData.updateInterval) {
-            val = parseInt(pluginData.updateInterval);
-            unit = "s";
-        }
-
         switch (unit) {
-            case "ms": return val;
-            case "s":  return val * 1000;
-            case "m":  return val * 60000;
-            case "h":  return val * 3600000;
-            default:   return 3600000;
+            case "m": ms = val * 60000; break;
+            case "h": ms = val * 3600000; break;
+            default:  ms = val * 3600000; break;
         }
+        // Enforce a minimum floor of at least 5 minutes (300,000 ms)
+        return Math.max(ms, 300000);
     }
     property string browserName: pluginData.browser || "firefox"
     
@@ -191,10 +188,23 @@ PluginComponent {
     // Day name for dynamic coloring - now reactive to "today" property
     property string currentDayName: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][root.today.getDay()]
     
+    // Check if system is running on battery or power-saver profile
+    readonly property bool isPowerSaving: {
+        let onBattery = (typeof BatteryService !== "undefined" && BatteryService && BatteryService.batteryAvailable && !BatteryService.isPluggedIn);
+        let powerSaver = false;
+        if (typeof PowerProfileWatcher !== "undefined" && PowerProfileWatcher && PowerProfileWatcher.available) {
+            powerSaver = (PowerProfileWatcher.currentProfile === 0 || PowerProfileWatcher.currentProfile === PowerProfile.PowerSaver);
+        } else if (typeof PowerProfiles !== "undefined" && PowerProfiles) {
+            powerSaver = (PowerProfiles.profile === 0 || PowerProfiles.profile === PowerProfile.PowerSaver);
+        }
+        return Boolean(onBattery || powerSaver);
+    }
+
     // Timer to update "Now" position
     property double currentTime: Date.now() / 1000
     Timer {
-        interval: 1000 // 1 second for live updates
+        // Tick once a minute (60s) normally, or 1s only when seconds are displayed or popout is actively open
+        interval: (root.popoutOpen && root.showSeconds) ? 1000 : 60000
         running: true
         repeat: true
         triggeredOnStart: true
@@ -219,7 +229,7 @@ PluginComponent {
         id: updateTimer
         // Temporarily reduce refresh interval when in error state (e.g., missing internet or keyring lock)
         // to automatically recover without requiring a manual refresh click.
-        interval: (root.errorType !== "") ? Math.min(10000, Math.max(100, root.updateIntervalMs)) : Math.max(100, root.updateIntervalMs)
+        interval: (root.errorType !== "") ? Math.min(30000, root.updateIntervalMs) : root.updateIntervalMs
         running: true
         repeat: true
         triggeredOnStart: true
@@ -327,13 +337,46 @@ PluginComponent {
         return "Anime";
     }
 
+    function getServiceIcon(modelData) {
+        if (!modelData) return "";
+        let domain = (modelData.siteDomain || "").toLowerCase();
+        let name = (modelData.siteName || "").toLowerCase();
+        let link = (modelData.watchLink || "").toLowerCase();
+
+        // 1. Check local assets/services/*.png
+        if (domain.includes("crunchyroll") || name.includes("crunchyroll") || link.includes("crunchyroll"))
+            return "assets/services/crunchyroll.png";
+        if (domain.includes("netflix") || name.includes("netflix") || link.includes("netflix"))
+            return "assets/services/netflix.png";
+        if (domain.includes("hidive") || name.includes("hidive") || link.includes("hidive"))
+            return "assets/services/hidive.png";
+        if (domain.includes("disney") || name.includes("disney") || link.includes("disney"))
+            return "assets/services/disneyplus.png";
+        if (domain.includes("hulu") || name.includes("hulu") || link.includes("hulu"))
+            return "assets/services/hulu.png";
+        if (domain.includes("amazon") || domain.includes("primevideo") || name.includes("prime") || link.includes("amazon") || link.includes("primevideo"))
+            return "assets/services/primevideo.png";
+        if (domain.includes("youtube") || name.includes("youtube") || link.includes("youtube") || domain.includes("youtu.be"))
+            return "assets/services/youtube.png";
+
+        // 2. Direct scraped icon if provided (e.g. LiveChart mask or custom host)
+        if (modelData.sourceIcon && modelData.sourceIcon !== "")
+            return modelData.sourceIcon;
+
+        // 3. Fallback to Google Favicon service if domain exists
+        if (modelData.siteDomain && modelData.siteDomain !== "")
+            return "https://www.google.com/s2/favicons?domain=" + modelData.siteDomain + "&sz=64";
+
+        return "";
+    }
+
     Timer {
         id: scrollTimer
         interval: 100
         repeat: false
         property int focusIndex: 0
         onTriggered: {
-            if (mainListView) {
+            if (typeof mainListView !== "undefined" && mainListView) {
                 mainListView.positionViewAtIndex(focusIndex, ListView.Beginning);
                 mainListView.currentIndex = focusIndex;
             }
@@ -413,6 +456,7 @@ PluginComponent {
                     fillMode: Image.PreserveAspectFit
                     sourceSize: Qt.size(64, 64)
                     smooth: true
+                    
                 }
             }
             Rectangle {
@@ -434,12 +478,13 @@ PluginComponent {
                     readonly property bool isLong: contentWidth > textContainer.width
                     property real scrollOffset: 0
                     
-                    x: isLong ? -scrollOffset : 0
+                    x: (isLong && !root.isPowerSaving) ? -scrollOffset : 0
                     anchors.verticalCenter: parent.verticalCenter
                     font.pixelSize: Theme.fontSizeSmall
                     color: Theme.widgetTextColor
                     text: root.getDankbarText(false)
                     wrapMode: Text.NoWrap
+                    elide: root.isPowerSaving ? Text.ElideRight : Text.ElideNone
                     
                     onTextChanged: {
                         scrollOffset = 0;
@@ -448,7 +493,7 @@ PluginComponent {
 
                     SequentialAnimation {
                         id: scrollAnimation
-                        running: statusText.isLong && textContainer.visible
+                        running: statusText.isLong && textContainer.visible && !root.isPowerSaving
                         loops: Animation.Infinite
 
                         PauseAnimation { duration: 2000 }
@@ -492,6 +537,7 @@ PluginComponent {
                     fillMode: Image.PreserveAspectFit
                     sourceSize: Qt.size(64, 64)
                     smooth: true
+                    
                 }
             }
             StyledText {
@@ -560,7 +606,7 @@ PluginComponent {
                             }
 
                             Image {
-                                source: "https://www.google.com/s2/favicons?domain=livechart.me&sz=64"
+                                source: "assets/LiveChart_Color"
                                 width: 24
                                 height: 24
                                 sourceSize: Qt.size(24, 24)
@@ -768,19 +814,11 @@ PluginComponent {
 
                         DankIcon {
                             id: refreshIcon
-                            name: root.isLoading ? "cached" : "refresh"
+                            name: "refresh"
                             size: 22
                             color: Theme.primary
                             anchors.centerIn: parent
-
-                            Connections {
-                                target: root
-                                function onIsLoadingChanged() {
-                                    if (!root.isLoading) {
-                                        refreshIcon.rotation = 0;
-                                    }
-                                }
-                            }
+                            visible: !root.isLoading
 
                             SequentialAnimation {
                                 id: hoverSpinAnim
@@ -790,14 +828,14 @@ PluginComponent {
                                 NumberAnimation { target: refreshIcon; property: "rotation"; from: 45; to: -45; duration: 400; easing.type: Easing.InOutQuad }
                                 NumberAnimation { target: refreshIcon; property: "rotation"; from: -45; to: 0; duration: 150; easing.type: Easing.InQuad }
                             }
+                        }
 
-                            RotationAnimation on rotation {
-                                from: 0
-                                to: 360
-                                duration: 1000
-                                loops: Animation.Infinite
-                                running: root.isLoading
-                            }
+                        DLoadingIndicator {
+                            anchors.centerIn: parent
+                            size: 24
+                            color: Theme.primary
+                            visible: root.isLoading
+                            running: root.isLoading
                         }
 
                         DankRipple {
@@ -954,16 +992,23 @@ PluginComponent {
                                         anchors.leftMargin: 38.5 // Aligns with vertical timeline axis
                                     }
                                     
-                                    // True dimension dummy card
+                                    // True dimension dummy card with DLoadingIndicator
                                     Rectangle {
                                         anchors.top: parent.top
                                         anchors.topMargin: 16
                                         width: Math.max(0, parent.width - 16) // Accurately reserves 16px scrollbar gutter
                                         height: 190
                                         radius: 20
-                                        color: Theme.withAlpha(Theme.surfaceVariantText, 0.1)
+                                        color: Theme.withAlpha(Theme.surfaceContainerHigh, 0.4)
                                         border.width: 1
-                                        border.color: Theme.withAlpha(Theme.surfaceVariantText, 0.05)
+                                        border.color: Theme.withAlpha(Theme.surfaceVariantText, 0.1)
+
+                                        DLoadingIndicator {
+                                            anchors.centerIn: parent
+                                            size: 44
+                                            color: Theme.primary
+                                            running: root.isLoading
+                                        }
                                     }
                                 }
                             }
@@ -1119,7 +1164,7 @@ PluginComponent {
 
                                             StyledText {
                                                 text: root.installCommand
-                                                font.family: "Monospace"
+                                                font.family: Theme.monoFontFamily || "Monospace"
                                                 font.pixelSize: Theme.fontSizeSmall
                                                 color: Theme.primary
                                                 Layout.fillWidth: true
@@ -1337,7 +1382,7 @@ PluginComponent {
                                 height: 16
                                 anchors.left: parent.left
                                 anchors.leftMargin: dayColumn.timelineX - 1.5 // 1.5 is half of 3px width
-                                color: dayDelegate.isToday ? "#0005FF" : Theme.withAlpha(Theme.surfaceVariantText, 0.2)
+                                color: dayDelegate.isToday ? Theme.primary : Theme.withAlpha(Theme.surfaceVariantText, 0.2)
                                 radius: 1.5
                             }
 
@@ -1413,7 +1458,7 @@ PluginComponent {
                                              anchors.bottom: parent.bottom
                                              anchors.left: parent.left
                                              anchors.leftMargin: innerListView.timelineX - 1.5
-                                             color: "#0005FF"
+                                             color: Theme.primary
                                              z: -1
                                          }
 
@@ -1500,7 +1545,7 @@ PluginComponent {
                                                  anchors.bottomMargin: -2 // Bleed into card for perfect connectivity
                                                  anchors.left: parent.left
                                                  anchors.leftMargin: innerListView.timelineX - 1.5
-                                                 color: "#0005FF"
+                                                 color: Theme.primary
                                                  z: -1 // Behind potential card border/overlap
                                              }
 
@@ -1561,72 +1606,76 @@ PluginComponent {
                                              anchors.left: parent.left
                                              anchors.leftMargin: innerListView.timelineX - 1.5
                                              anchors.bottomMargin: -2 // Bleed into card
-                                             color: dayDelegate.isToday ? "#0005FF" : Theme.withAlpha(Theme.surfaceVariantText, 0.2)
+                                             color: dayDelegate.isToday ? Theme.primary : Theme.withAlpha(Theme.surfaceVariantText, 0.2)
                                              visible: !nowMarker.visible
                                              z: -1
                                          }
 
-                                        StyledRect {
-                                            id: cardRect
+                                        Item {
+                                            id: cardWrapper
                                             width: Math.max(0, parent.width - 16) // Room for scrollbar
                                             anchors.horizontalCenter: parent.horizontalCenter // Center to prevent clipping on edges
                                             height: 190
-                                            color: Theme.withAlpha(Theme.surfaceContainerHigh, Theme.popupTransparency)
-                                            radius: 20
-                                            
-                                            property bool hasStatus: modelData.libraryStatus !== "none" && modelData.libraryStatus !== "" && modelData.libraryStatus !== undefined
-                                            
-                                            property color statusColor: {
-                                                if (!hasStatus) return Theme.primary;
-                                                switch(modelData.libraryStatus) {
-                                                    case "watching": return "#4CAF50"; // Green
-                                                    case "rewatching": return "#4CAF50"; // Green
-                                                    case "completed": return "#6B89C9"; // Blue
-                                                    case "planning": return "#9C27B0"; // Purple
-                                                    case "considering": return "#FFC107"; // Gold/Yellow
-                                                    case "paused": return "#FE8E14"; // Orange
-                                                    case "dropped": return "#AC675D"; // Reddish-Brown
-                                                    case "skipping": return "#F44336"; // Red
-                                                    case "in-list": return Theme.primary;
-                                                    default: return Theme.primary;
-                                                }
-                                            }
 
-                                            border.width: 2
-                                            border.color: cardMouseArea.containsMouse 
-                                                ? Theme.withAlpha(statusColor, 0.7)
-                                                : Theme.withAlpha(Theme.surfaceVariantText, 0.15)
-                                            Behavior on border.color { ColorAnimation { duration: 150; easing.type: Easing.OutQuad } }
-                                            Behavior on border.width { NumberAnimation { duration: 150; easing.type: Easing.OutQuad } }
-                                            
-                                            scale: cardMouseArea.containsMouse ? 1.02 : 1.0
-                                            Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutQuad } }
-
-                                            DankRipple {
-                                                id: cardRipple
-                                                cornerRadius: parent.radius
-                                                rippleColor: Theme.primary
+                                            StyledRect {
+                                                id: cardRect
                                                 anchors.fill: parent
-                                            }
-
-                                            MouseArea {
-                                                id: cardMouseArea
-                                                anchors.fill: parent
-                                                hoverEnabled: true
-                                                cursorShape: root.cardClickAction === "none" ? Qt.ArrowCursor : Qt.PointingHandCursor
-                                                // No z-index explicitly, just defined before the layouts 
-                                                // so buttons inside layouts can take precedence.
-                                                onPressed: (mouse) => {
-                                                    if (root.cardClickAction !== "none") cardRipple.trigger(mouse.x, mouse.y);
-                                                }
-                                                onClicked: {
-                                                    if (root.cardClickAction === "anime_entry" && modelData.animeLink) {
-                                                        root.openUrl(modelData.animeLink)
-                                                    } else if (root.cardClickAction === "watch_page" && modelData.watchLink) {
-                                                        root.openUrl(modelData.watchLink)
+                                                height: 190
+                                                color: Theme.withAlpha(Theme.surfaceContainerHigh, Theme.popupTransparency)
+                                                radius: 20
+                                                
+                                                property bool hasStatus: modelData.libraryStatus !== "none" && modelData.libraryStatus !== "" && modelData.libraryStatus !== undefined
+                                                
+                                                property color statusColor: {
+                                                    if (!hasStatus) return Theme.primary;
+                                                    switch(modelData.libraryStatus) {
+                                                        case "watching": return Theme.success || "#4CAF50";
+                                                        case "rewatching": return Theme.success || "#4CAF50";
+                                                        case "completed": return Theme.primary;
+                                                        case "planning": return Theme.secondary || Theme.accent;
+                                                        case "considering": return Theme.warning || "#FFC107";
+                                                        case "paused": return Theme.warning || "#FE8E14";
+                                                        case "dropped": return Theme.error || "#AC675D";
+                                                        case "skipping": return Theme.error || "#F44336";
+                                                        case "in-list": return Theme.primary;
+                                                        default: return Theme.primary;
                                                     }
                                                 }
-                                            }
+
+                                                border.width: 2
+                                                border.color: cardMouseArea.containsMouse 
+                                                    ? Theme.withAlpha(statusColor, 0.7)
+                                                    : Theme.withAlpha(Theme.surfaceVariantText, 0.15)
+                                                Behavior on border.color { ColorAnimation { duration: 150; easing.type: Easing.OutQuad } }
+                                                
+                                                scale: cardMouseArea.containsMouse ? 1.02 : 1.0
+                                                Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutQuad } }
+
+                                                DankRipple {
+                                                    id: cardRipple
+                                                    cornerRadius: parent.radius
+                                                    rippleColor: Theme.primary
+                                                    anchors.fill: parent
+                                                }
+
+                                                MouseArea {
+                                                    id: cardMouseArea
+                                                    anchors.fill: parent
+                                                    hoverEnabled: true
+                                                    cursorShape: root.cardClickAction === "none" ? Qt.ArrowCursor : Qt.PointingHandCursor
+                                                    // No z-index explicitly, just defined before the layouts 
+                                                    // so buttons inside layouts can take precedence.
+                                                    onPressed: (mouse) => {
+                                                        if (root.cardClickAction !== "none") cardRipple.trigger(mouse.x, mouse.y);
+                                                    }
+                                                    onClicked: {
+                                                        if (root.cardClickAction === "anime_entry" && modelData.animeLink) {
+                                                            root.openUrl(modelData.animeLink)
+                                                        } else if (root.cardClickAction === "watch_page" && modelData.watchLink) {
+                                                            root.openUrl(modelData.watchLink)
+                                                        }
+                                                    }
+                                                }
 
                                             ColumnLayout {
                                             anchors.fill: parent
@@ -1704,16 +1753,31 @@ PluginComponent {
 
                                                           property string iconName: modelData.libraryStatus === "none" ? "unmarked" : modelData.libraryStatus
 
-                                                          Image {
+                                                          DankIcon {
                                                               id: statusIcon
-                                                              source: "file:///home/JD/Downloads/Projects/LiveChartPlugin/icons/" + bookmarkItem.iconName + ".svg"
+                                                              name: {
+                                                                  switch (modelData.libraryStatus) {
+                                                                      case "watching": return "visibility";
+                                                                      case "rewatching": return "replay";
+                                                                      case "completed": return "check_circle";
+                                                                      case "planning": return "schedule";
+                                                                      case "considering": return "help_outline";
+                                                                      case "paused": return "pause_circle";
+                                                                      case "dropped": return "cancel";
+                                                                      case "skipping": return "fast_forward";
+                                                                      case "in-list": return "bookmark";
+                                                                      default: return "bookmark_outline";
+                                                                  }
+                                                              }
+                                                              size: 20
+                                                              color: bookmarkItem.statusColor
                                                               width: 20
                                                               height: 20
                                                               anchors.centerIn: parent
                                                               anchors.verticalCenterOffset: -1 // Shift up for visual balance in bookmark
                                                               visible: modelData.libraryStatus !== "none" || bookmarkMA.containsMouse
-                                                              smooth: true
-                                                              mipmap: true
+                                                              
+                                                              
                                                               opacity: bookmarkMA.containsMouse ? 1.0 : 0.8
                                                           }
 
@@ -1878,9 +1942,10 @@ PluginComponent {
                                                                 Image {
                                                                     id: watchIcon
                                                                     anchors.fill: parent
-                                                                    // Robust favicon fallback
-                                                                    source: modelData.sourceIcon || (modelData.siteDomain ? "https://www.google.com/s2/favicons?domain=" + modelData.siteDomain + "&sz=64" : "")
+                                                                    source: root.getServiceIcon(modelData)
                                                                     visible: source.toString() !== ""
+                                                                    smooth: true
+                                                                    mipmap: true
                                                                 }
                                                             }
 
@@ -1995,7 +2060,8 @@ PluginComponent {
                                                  }
                                              }
                                         }
-                                    } // Rectangle (cardRect)
+                                    } // StyledRect (cardRect)
+                                } // Item (cardWrapper)
                                 } // Column (Show Column)
                             } // Item (Inner delegate)
                         } // DankListView (Inner)

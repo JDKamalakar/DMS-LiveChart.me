@@ -123,28 +123,8 @@ def find_brand_profile_dir(brand):
                 dirs[:] = [] 
                 
     if not profile_candidates:
-        # Final Resort: Deep Search of Home Directory (avoiding obvious non-browser folders)
-        print(f"DEBUG: No standard paths found. Initiating deep search in {home}", file=sys.stderr)
-        exclude_dirs = {'.cache', 'Downloads', 'Pictures', 'Videos', 'Music', 'Desktop', '.local/share/Trash', '.git', 'node_modules', '.cargo', '.sdk'}
-        for root, dirs, files in os.walk(home, followlinks=False):
-            root_parts = root.split(os.sep)
-            if any(part in exclude_dirs for part in root_parts):
-                dirs[:] = [] # Skip excluded trees
-                continue
-                
-            if 'cookies.sqlite' in files:
-                db_path = os.path.join(root, 'cookies.sqlite')
-                # Prioritize paths that look like they belong to a browser
-                if any(x in root.lower() for x in ['firefox', 'mozilla', brand]):
-                    try:
-                        mtime = os.path.getmtime(db_path)
-                        profile_candidates.append((mtime, root))
-                    except OSError:
-                        pass
-            
-            # Limit depth for general home walking to prevent infinite hangs
-            if len(root_parts) - len(home.split(os.sep)) > 6:
-                dirs[:] = []
+        print(f"DEBUG: No profile directory found for {brand} in standard paths.", file=sys.stderr)
+        return None
                 
     if profile_candidates:
         # Sort by most recently modified cookies database
@@ -186,8 +166,6 @@ def get_cookies_firefox(browser_type):
         return ""
         
     cookie_db = os.path.join(profile_dir, 'cookies.sqlite')
-    tmp_db = '/tmp/livechart_cookies.sqlite'
-    
     print(f"DEBUG: Using cookie database: {cookie_db}", file=sys.stderr)
     
     if os.path.exists(cookie_db):
@@ -205,20 +183,34 @@ def get_cookies_firefox(browser_type):
             print(f"DEBUG: browser_cookie3 file-mode failed: {e}", file=sys.stderr)
 
         # Step 4: Final Fallback - Direct SQLite Extraction (Safe as Firefox cookies aren't encrypted on Linux)
+        # Try URI read-only mode first so we don't need to copy any files
         try:
-            shutil.copy2(cookie_db, tmp_db)
-            conn = sqlite3.connect(tmp_db)
+            conn = sqlite3.connect(f"file:{cookie_db}?mode=ro&immutable=1", uri=True)
             cursor = conn.cursor()
             cursor.execute("SELECT name, value FROM moz_cookies WHERE host LIKE '%livechart.me%'")
             cookies = cursor.fetchall()
             conn.close()
-            print(f"DEBUG: SQLite extraction found {len(cookies)} cookies", file=sys.stderr)
-            try: os.unlink(tmp_db)
-            except: pass
-            
-            if not cookies:
-                return ""
-            return "; ".join([f"{name}={value}" for name, value in cookies])
+            print(f"DEBUG: SQLite (read-only URI) extraction found {len(cookies)} cookies", file=sys.stderr)
+            if cookies:
+                return "; ".join([f"{name}={value}" for name, value in cookies])
+        except Exception as e:
+            print(f"DEBUG: Direct SQLite read-only URI failed: {e}, falling back to private tempfile", file=sys.stderr)
+
+        # If direct URI fails, copy to a private, secure temp directory with guaranteed cleanup
+        import tempfile
+        try:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                tmp_db = os.path.join(tmp_dir, "cookies.sqlite")
+                shutil.copy2(cookie_db, tmp_db)
+                conn = sqlite3.connect(tmp_db)
+                cursor = conn.cursor()
+                cursor.execute("SELECT name, value FROM moz_cookies WHERE host LIKE '%livechart.me%'")
+                cookies = cursor.fetchall()
+                conn.close()
+                print(f"DEBUG: SQLite (tempdir) extraction found {len(cookies)} cookies", file=sys.stderr)
+                if not cookies:
+                    return ""
+                return "; ".join([f"{name}={value}" for name, value in cookies])
         except Exception as e:
             print(f"DEBUG: Direct SQLite extraction failed: {e}", file=sys.stderr)
             return ""
@@ -295,16 +287,42 @@ def extract_cookie_header(browser_type):
     # but we import here to use the module.
     import browser_cookie3
 
+    cookie_header = ""
     if browser_type == "firefox" or browser_type == "zen":
-        return get_cookies_firefox(browser_type)
+        cookie_header = get_cookies_firefox(browser_type)
     elif browser_type in ["chrome", "chrome_beta"]:
         cj = get_cookies_chrome(browser_type)
         if cj:
             import urllib.request
             req = urllib.request.Request("https://www.livechart.me/")
             cj.add_cookie_header(req)
-            return req.get_header('Cookie', '')
-    return ""
+            cookie_header = req.get_header('Cookie', '')
+
+    # Auto-detection fallback: if selected browser is logged out or missing livechart session,
+    # check alternative browsers to find an active user session.
+    if "__Host-livechart_session" not in cookie_header:
+        for fallback_browser in ["chrome", "chrome_beta", "firefox"]:
+            if fallback_browser == browser_type:
+                continue
+            try:
+                candidate = ""
+                if fallback_browser in ["chrome", "chrome_beta"]:
+                    fcj = get_cookies_chrome(fallback_browser)
+                    if fcj:
+                        import urllib.request
+                        freq = urllib.request.Request("https://www.livechart.me/")
+                        fcj.add_cookie_header(freq)
+                        candidate = freq.get_header('Cookie', '')
+                elif fallback_browser == "firefox":
+                    candidate = get_cookies_firefox(fallback_browser)
+                
+                if "__Host-livechart_session" in candidate:
+                    print(f"DEBUG: Found active LiveChart session in {fallback_browser}, using it as fallback", file=sys.stderr)
+                    return candidate
+            except Exception:
+                pass
+
+    return cookie_header
 
 def _cookie_worker(browser_type, result_file):
     import sys
@@ -328,7 +346,8 @@ def _cookie_worker(browser_type, result_file):
 
 CACHE_DIR = os.path.join("/tmp", "liveChartSchedule", "cache")
 
-def download_image(url, opener):
+def download_image(url):
+    """Download image using a clean unauthenticated request (no session cookies leaked to 3rd-party hosts)"""
     if not url:
         return ""
     
@@ -336,7 +355,7 @@ def download_image(url, opener):
         os.makedirs(CACHE_DIR)
         
     # Generate a unique filename based on the URL
-    ext = url.split('.')[-1]
+    ext = url.split('.')[-1].split('?')[0]
     if len(ext) > 4: # Sanity check for long extensions or queries
         ext = "jpg"
     filename = hashlib.md5(url.encode()).hexdigest() + "." + ext
@@ -350,7 +369,7 @@ def download_image(url, opener):
         req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
         req.add_header('Referer', 'https://www.livechart.me/')
         
-        with opener.open(req, timeout=10) as response:
+        with urllib.request.urlopen(req, timeout=10) as response:
             with open(filepath, 'wb') as f:
                 f.write(response.read())
         return "file://" + filepath
@@ -415,6 +434,59 @@ def get_livechart_data(date_str, browser_type="firefox"):
         response = opener.open(req, timeout=15)
         html = response.read().decode('utf-8')
         soup = BeautifulSoup(html, 'html.parser')
+
+        # Extract user library (active watched count) via GraphQL if authenticated session is present
+        user_library_map = {} # databaseId -> (status, episodesWatched)
+        try:
+            csrf_meta = soup.find('meta', {'name': 'csrf-token'})
+            csrf_token = csrf_meta['content'] if csrf_meta else ''
+            
+            if csrf_token:
+                # 1. Fetch viewer ID
+                viewer_req = urllib.request.Request(
+                    'https://www.livechart.me/graphql',
+                    data=json.dumps({'query': '{ viewer { id } }'}).encode('utf-8'),
+                    headers={
+                        'User-Agent': user_agent,
+                        'Content-Type': 'application/json',
+                        'X-CSRF-Token': csrf_token
+                    }
+                )
+                with opener.open(viewer_req, timeout=5) as v_resp:
+                    v_data = json.loads(v_resp.read().decode('utf-8'))
+                    viewer_id = v_data.get('data', {}).get('viewer', {}).get('id')
+                
+                # Fetch viewer library entries across all statuses
+                lib_query = {
+                    "query": """query {
+                      w: viewer { library(statuses: [WATCHING, REWATCHING], first: 250) { nodes { status episodesWatched anime { databaseId } } } }
+                      p: viewer { library(statuses: [PLANNING, CONSIDERING], first: 250) { nodes { status episodesWatched anime { databaseId } } } }
+                      c: viewer { library(statuses: [COMPLETED], first: 250) { nodes { status episodesWatched anime { databaseId } } } }
+                      o: viewer { library(statuses: [PAUSED, DROPPED, SKIPPING], first: 250) { nodes { status episodesWatched anime { databaseId } } } }
+                    }"""
+                }
+                lib_req = urllib.request.Request(
+                    'https://www.livechart.me/graphql',
+                    data=json.dumps(lib_query).encode('utf-8'),
+                    headers={
+                        'User-Agent': user_agent,
+                        'Content-Type': 'application/json',
+                        'X-CSRF-Token': csrf_token
+                    }
+                )
+                with opener.open(lib_req, timeout=5) as l_resp:
+                    l_data = json.loads(l_resp.read().decode('utf-8'))
+                    for group_data in l_data.get('data', {}).values():
+                        lib_obj = group_data.get('library', {})
+                        for n in lib_obj.get('nodes', []):
+                            db_id = n.get('anime', {}).get('databaseId')
+                            if db_id:
+                                try:
+                                    user_library_map[int(db_id)] = (n.get('status', '').lower(), int(n.get('episodesWatched', 0)))
+                                except (ValueError, TypeError):
+                                    pass
+        except Exception as e:
+            print(f"DEBUG: GraphQL library fetch skipped: {e}", file=sys.stderr)
         
         results = []
         days = soup.find_all('div', class_='lc-timetable-day')
@@ -475,9 +547,9 @@ def get_livechart_data(date_str, browser_type="firefox"):
                     if img_elem:
                         img_src = img_elem.get('src') or img_elem.get('data-src') or ''
                     
-                    # Download image locally
+                    # Download image locally with clean opener
                     if img_src:
-                        img_src = download_image(img_src, opener)
+                        img_src = download_image(img_src)
                         
                     # Try to get source icon and domain
                     action_btn = block.find('a', class_='lc-tt-action-button')
@@ -502,6 +574,17 @@ def get_livechart_data(date_str, browser_type="firefox"):
                         icon_img = action_btn.find('img')
                         if icon_img:
                             source_icon = icon_img.get('src') or icon_img.get('data-src') or ""
+                        if not source_icon:
+                            style = (action_btn.get('style') or "") + " "
+                            inner_div = action_btn.find('div')
+                            if inner_div:
+                                style += inner_div.get('style') or ""
+                            mask_match = re.search(r'url\((.*?)\)', style)
+                            if mask_match:
+                                raw_url = mask_match.group(1).strip()
+                                if raw_url.startswith(('"', "'")) and raw_url.endswith(('"', "'")):
+                                    raw_url = raw_url[1:-1]
+                                source_icon = raw_url
                     
                     time_val = ep_label.strip() if ep_label else "TBA"
 
@@ -510,8 +593,22 @@ def get_livechart_data(date_str, browser_type="firefox"):
                         anime_link = "https://www.livechart.me" + title_elem.get('href')
 
                     # Library Status Extraction
-                    # Priority 1: data-library-status attribute directly on the anime block div
-                    library_status = block.get('data-library-status', '').strip()
+                    block_aid_raw = block.get('data-schedule-anime-id') or block.get('data-anime-id')
+                    block_aid = None
+                    if block_aid_raw:
+                        try:
+                            block_aid = int(block_aid_raw)
+                        except (ValueError, TypeError):
+                            pass
+                    
+                    user_episodes_watched = None
+                    if block_aid and block_aid in user_library_map:
+                        g_status, g_watched = user_library_map[block_aid]
+                        library_status = g_status
+                        user_episodes_watched = g_watched
+                    else:
+                        # Priority 1: data-library-status attribute directly on the anime block div
+                        library_status = block.get('data-library-status', '').strip()
                     
                     if not library_status or library_status == '':
                         library_status = "none"
@@ -567,7 +664,9 @@ def get_livechart_data(date_str, browser_type="firefox"):
                     # Determine if the currently scheduled episode is considered "watched"
                     is_watched = False
                     
-                    if library_status == "completed":
+                    if user_episodes_watched is not None and card_ep_num > 0:
+                        is_watched = (card_ep_num <= user_episodes_watched)
+                    elif library_status == "completed":
                         is_watched = True
                     else:
                         for btn in block.find_all('button', class_='lc-tt-progress-button'):
