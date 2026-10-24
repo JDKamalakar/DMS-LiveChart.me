@@ -606,7 +606,7 @@ PluginComponent {
                             }
 
                             Image {
-                                source: root.isDarkTheme ? "assets/LiveChart_White.svg" : "assets/LiveChart.svg"
+                                source: "assets/LiveChart_Color"
                                 width: 24
                                 height: 24
                                 sourceSize: Qt.size(24, 24)

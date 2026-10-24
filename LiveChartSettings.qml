@@ -1,10 +1,12 @@
 import QtQuick
 import QtQuick.Layouts
 import Quickshell
+import Quickshell.Io
 import qs.Common
 import qs.Widgets
 import qs.DCommon.Widgets
 import qs.Modules.Plugins
+import qs.Modules.Settings.Widgets
 import qs.Services
 
 PluginSettings {
@@ -638,6 +640,192 @@ PluginSettings {
                         { label: "Open LiveChart Home", value: "livechart" }
                     ]
                     isLast: true
+                }
+            }
+        }
+
+        // ---------------------------------------------------------------------
+        // 5. REQUIRED PACKAGES (Segmented Collapsible Section matching DMS UI)
+        // ---------------------------------------------------------------------
+        Item {
+            id: depsWrapper
+            width: parent.width
+            implicitHeight: depsCol.implicitHeight
+
+            property bool expanded: false
+            property var depStatus: ({
+                "python3": true,
+                "bs4": true,
+                "browser_cookie3": true,
+                "keyring": true
+            })
+            property bool isChecking: true
+
+            Process {
+                id: depChecker
+                command: [
+                    "python3", "-c",
+                    "import json, sys\n" +
+                    "results = {}\n" +
+                    "results['python3'] = True\n" +
+                    "for pkg, mod in [('bs4', 'bs4'), ('browser_cookie3', 'browser_cookie3'), ('keyring', 'keyring')]:\n" +
+                    "    try:\n" +
+                    "        __import__(mod)\n" +
+                    "        results[pkg] = True\n" +
+                    "    except Exception:\n" +
+                    "        results[pkg] = False\n" +
+                    "sys.stdout.write(json.dumps(results))\n"
+                ]
+                stdout: StdioCollector {
+                    onStreamFinished: {
+                        depsWrapper.isChecking = false;
+                        try {
+                            if (text && text.trim() !== "") {
+                                depsWrapper.depStatus = JSON.parse(text.trim());
+                            }
+                        } catch (e) {
+                            console.warn("Failed to parse dependency status:", e);
+                        }
+                    }
+                }
+            }
+
+            Component.onCompleted: {
+                depChecker.running = true;
+            }
+
+            Column {
+                id: depsCol
+                width: parent.width
+                spacing: 0
+
+                Item {
+                    id: depsHeaderRow
+                    width: parent.width
+                    height: 40
+
+                    Row {
+                        anchors.left: parent.left
+                        anchors.leftMargin: Theme.spacingM
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: Theme.spacingXS
+
+                        DankIcon {
+                            name: "extension"
+                            size: 16
+                            color: Theme.primary
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+
+                        StyledText {
+                            text: I18n.tr("Required packages")
+                            font.pixelSize: Theme.fontSizeSmall
+                            font.weight: Font.DemiBold
+                            color: Theme.primary
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                    }
+
+                    DIcon {
+                        anchors.right: parent.right
+                        anchors.rightMargin: Theme.spacingM
+                        anchors.verticalCenter: parent.verticalCenter
+                        name: "expand_more"
+                        size: Theme.iconSize || 20
+                        color: Theme.surfaceVariantText
+                        rotation: depsWrapper.expanded ? 180 : 0
+
+                        Behavior on rotation {
+                            NumberAnimation {
+                                duration: 200
+                                easing.type: Easing.OutCubic
+                            }
+                        }
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            depsWrapper.expanded = !depsWrapper.expanded;
+                            if (depsWrapper.expanded) {
+                                depsWrapper.isChecking = true;
+                                depChecker.running = true;
+                            }
+                        }
+                    }
+                }
+
+                Item {
+                    id: animHost
+                    width: parent.width
+                    clip: true
+                    height: depsWrapper.expanded ? groupContent.implicitHeight : 0
+                    opacity: depsWrapper.expanded ? 1.0 : 0.0
+                    visible: height > 0 || depsWrapper.expanded
+
+                    Behavior on height {
+                        NumberAnimation {
+                            duration: 250
+                            easing.type: Easing.OutCubic
+                        }
+                    }
+
+                    Behavior on opacity {
+                        NumberAnimation {
+                            duration: 200
+                            easing.type: Easing.OutQuad
+                        }
+                    }
+
+                    SettingsGroup {
+                        id: groupContent
+                        width: parent.width
+
+                        SettingsRow {
+                            visible: depsWrapper.isChecking
+                            iconName: "hourglass_top"
+                            title: I18n.tr("Checking packages...")
+                        }
+
+                        Repeater {
+                            model: [
+                                {
+                                    id: "python3",
+                                    pkg: "python3",
+                                    features: "Executing the LiveChart.me scraper & CLI operations",
+                                    present: Boolean(depsWrapper.depStatus.python3)
+                                },
+                                {
+                                    id: "bs4",
+                                    pkg: "beautifulsoup4",
+                                    features: "Parsing schedule timetable markup and CSRF tokens",
+                                    present: Boolean(depsWrapper.depStatus.bs4)
+                                },
+                                {
+                                    id: "browser_cookie3",
+                                    pkg: "browser-cookie3",
+                                    features: "Syncing watchlist session tokens from installed browsers",
+                                    present: Boolean(depsWrapper.depStatus.browser_cookie3)
+                                },
+                                {
+                                    id: "keyring",
+                                    pkg: "keyring",
+                                    features: "Decrypting Chromium-based session cookies securely",
+                                    present: Boolean(depsWrapper.depStatus.keyring)
+                                }
+                            ]
+
+                            delegate: SettingsRow {
+                                iconName: modelData.present ? "check_circle" : "error"
+                                iconColor: modelData.present ? Theme.success : Theme.error
+                                title: modelData.pkg
+                                subtitle: I18n.tr("Used for: %1").arg(modelData.features)
+                                trailingBadge: modelData.present ? I18n.tr("Installed") : I18n.tr("Missing")
+                                trailingBadgeColor: modelData.present ? Theme.surfaceVariantText : Theme.error
+                            }
+                        }
+                    }
                 }
             }
         }
