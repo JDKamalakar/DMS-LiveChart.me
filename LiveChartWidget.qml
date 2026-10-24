@@ -190,8 +190,13 @@ PluginComponent {
     
     // Check if system is running on battery or power-saver profile
     readonly property bool isPowerSaving: {
-        let onBattery = (typeof UPower !== "undefined" && UPower.onBattery);
-        let powerSaver = (typeof PowerProfiles !== "undefined" && PowerProfiles.profile === PowerProfile.PowerSaver);
+        let onBattery = (typeof BatteryService !== "undefined" && BatteryService && BatteryService.batteryAvailable && !BatteryService.isPluggedIn);
+        let powerSaver = false;
+        if (typeof PowerProfileWatcher !== "undefined" && PowerProfileWatcher && PowerProfileWatcher.available) {
+            powerSaver = (PowerProfileWatcher.currentProfile === 0 || PowerProfileWatcher.currentProfile === PowerProfile.PowerSaver);
+        } else if (typeof PowerProfiles !== "undefined" && PowerProfiles) {
+            powerSaver = (PowerProfiles.profile === 0 || PowerProfiles.profile === PowerProfile.PowerSaver);
+        }
         return Boolean(onBattery || powerSaver);
     }
 
@@ -332,13 +337,46 @@ PluginComponent {
         return "Anime";
     }
 
+    function getServiceIcon(modelData) {
+        if (!modelData) return "";
+        let domain = (modelData.siteDomain || "").toLowerCase();
+        let name = (modelData.siteName || "").toLowerCase();
+        let link = (modelData.watchLink || "").toLowerCase();
+
+        // 1. Check local assets/services/*.png
+        if (domain.includes("crunchyroll") || name.includes("crunchyroll") || link.includes("crunchyroll"))
+            return "assets/services/crunchyroll.png";
+        if (domain.includes("netflix") || name.includes("netflix") || link.includes("netflix"))
+            return "assets/services/netflix.png";
+        if (domain.includes("hidive") || name.includes("hidive") || link.includes("hidive"))
+            return "assets/services/hidive.png";
+        if (domain.includes("disney") || name.includes("disney") || link.includes("disney"))
+            return "assets/services/disneyplus.png";
+        if (domain.includes("hulu") || name.includes("hulu") || link.includes("hulu"))
+            return "assets/services/hulu.png";
+        if (domain.includes("amazon") || domain.includes("primevideo") || name.includes("prime") || link.includes("amazon") || link.includes("primevideo"))
+            return "assets/services/primevideo.png";
+        if (domain.includes("youtube") || name.includes("youtube") || link.includes("youtube") || domain.includes("youtu.be"))
+            return "assets/services/youtube.png";
+
+        // 2. Direct scraped icon if provided (e.g. LiveChart mask or custom host)
+        if (modelData.sourceIcon && modelData.sourceIcon !== "")
+            return modelData.sourceIcon;
+
+        // 3. Fallback to Google Favicon service if domain exists
+        if (modelData.siteDomain && modelData.siteDomain !== "")
+            return "https://www.google.com/s2/favicons?domain=" + modelData.siteDomain + "&sz=64";
+
+        return "";
+    }
+
     Timer {
         id: scrollTimer
         interval: 100
         repeat: false
         property int focusIndex: 0
         onTriggered: {
-            if (mainListView) {
+            if (typeof mainListView !== "undefined" && mainListView) {
                 mainListView.positionViewAtIndex(focusIndex, ListView.Beginning);
                 mainListView.currentIndex = focusIndex;
             }
@@ -1126,7 +1164,7 @@ PluginComponent {
 
                                             StyledText {
                                                 text: root.installCommand
-                                                font.family: "Monospace"
+                                                font.family: Theme.monoFontFamily || "Monospace"
                                                 font.pixelSize: Theme.fontSizeSmall
                                                 color: Theme.primary
                                                 Layout.fillWidth: true
@@ -1579,47 +1617,12 @@ PluginComponent {
                                             anchors.horizontalCenter: parent.horizontalCenter // Center to prevent clipping on edges
                                             height: 190
 
-                                            // Spinning gradient border layer (shown when hovered, pauses on battery saver)
-                                            Rectangle {
-                                                id: spinningBorderOuter
-                                                anchors.fill: parent
-                                                radius: 20
-                                                color: "transparent"
-                                                clip: true
-                                                visible: cardMouseArea.containsMouse && !root.isPowerSaving
-
-                                                Rectangle {
-                                                    id: rotatingSweep
-                                                    width: parent.width * 1.5
-                                                    height: parent.height * 1.5
-                                                    anchors.centerIn: parent
-                                                    color: "transparent"
-
-                                                    rotation: 0
-                                                    NumberAnimation on rotation {
-                                                        from: 0
-                                                        to: 360
-                                                        duration: 2500
-                                                        loops: Animation.Infinite
-                                                        running: spinningBorderOuter.visible
-                                                    }
-
-                                                    gradient: Gradient {
-                                                        orientation: Gradient.Horizontal
-                                                        GradientStop { position: 0.0; color: Theme.primary }
-                                                        GradientStop { position: 0.5; color: Theme.withAlpha(cardRect.statusColor, 0.2) }
-                                                        GradientStop { position: 1.0; color: cardRect.statusColor }
-                                                    }
-                                                }
-                                            }
-
                                             StyledRect {
                                                 id: cardRect
                                                 anchors.fill: parent
-                                                anchors.margins: (cardMouseArea.containsMouse && !root.isPowerSaving) ? 2 : 0
                                                 height: 190
                                                 color: Theme.withAlpha(Theme.surfaceContainerHigh, Theme.popupTransparency)
-                                                radius: (cardMouseArea.containsMouse && !root.isPowerSaving) ? 18 : 20
+                                                radius: 20
                                                 
                                                 property bool hasStatus: modelData.libraryStatus !== "none" && modelData.libraryStatus !== "" && modelData.libraryStatus !== undefined
                                                 
@@ -1639,12 +1642,11 @@ PluginComponent {
                                                     }
                                                 }
 
-                                                border.width: (cardMouseArea.containsMouse && !root.isPowerSaving) ? 0 : 2
+                                                border.width: 2
                                                 border.color: cardMouseArea.containsMouse 
                                                     ? Theme.withAlpha(statusColor, 0.7)
                                                     : Theme.withAlpha(Theme.surfaceVariantText, 0.15)
                                                 Behavior on border.color { ColorAnimation { duration: 150; easing.type: Easing.OutQuad } }
-                                                Behavior on border.width { NumberAnimation { duration: 150; easing.type: Easing.OutQuad } }
                                                 
                                                 scale: cardMouseArea.containsMouse ? 1.02 : 1.0
                                                 Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutQuad } }
@@ -1940,9 +1942,10 @@ PluginComponent {
                                                                 Image {
                                                                     id: watchIcon
                                                                     anchors.fill: parent
-                                                                    // Use sourceIcon directly without third-party Google favicon scraping
-                                                                    source: modelData.sourceIcon || ""
+                                                                    source: root.getServiceIcon(modelData)
                                                                     visible: source.toString() !== ""
+                                                                    smooth: true
+                                                                    mipmap: true
                                                                 }
                                                             }
 

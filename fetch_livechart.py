@@ -287,16 +287,42 @@ def extract_cookie_header(browser_type):
     # but we import here to use the module.
     import browser_cookie3
 
+    cookie_header = ""
     if browser_type == "firefox" or browser_type == "zen":
-        return get_cookies_firefox(browser_type)
+        cookie_header = get_cookies_firefox(browser_type)
     elif browser_type in ["chrome", "chrome_beta"]:
         cj = get_cookies_chrome(browser_type)
         if cj:
             import urllib.request
             req = urllib.request.Request("https://www.livechart.me/")
             cj.add_cookie_header(req)
-            return req.get_header('Cookie', '')
-    return ""
+            cookie_header = req.get_header('Cookie', '')
+
+    # Auto-detection fallback: if selected browser is logged out or missing livechart session,
+    # check alternative browsers to find an active user session.
+    if "__Host-livechart_session" not in cookie_header:
+        for fallback_browser in ["chrome", "chrome_beta", "firefox"]:
+            if fallback_browser == browser_type:
+                continue
+            try:
+                candidate = ""
+                if fallback_browser in ["chrome", "chrome_beta"]:
+                    fcj = get_cookies_chrome(fallback_browser)
+                    if fcj:
+                        import urllib.request
+                        freq = urllib.request.Request("https://www.livechart.me/")
+                        fcj.add_cookie_header(freq)
+                        candidate = freq.get_header('Cookie', '')
+                elif fallback_browser == "firefox":
+                    candidate = get_cookies_firefox(fallback_browser)
+                
+                if "__Host-livechart_session" in candidate:
+                    print(f"DEBUG: Found active LiveChart session in {fallback_browser}, using it as fallback", file=sys.stderr)
+                    return candidate
+            except Exception:
+                pass
+
+    return cookie_header
 
 def _cookie_worker(browser_type, result_file):
     import sys
@@ -408,6 +434,59 @@ def get_livechart_data(date_str, browser_type="firefox"):
         response = opener.open(req, timeout=15)
         html = response.read().decode('utf-8')
         soup = BeautifulSoup(html, 'html.parser')
+
+        # Extract user library (active watched count) via GraphQL if authenticated session is present
+        user_library_map = {} # databaseId -> (status, episodesWatched)
+        try:
+            csrf_meta = soup.find('meta', {'name': 'csrf-token'})
+            csrf_token = csrf_meta['content'] if csrf_meta else ''
+            
+            if csrf_token:
+                # 1. Fetch viewer ID
+                viewer_req = urllib.request.Request(
+                    'https://www.livechart.me/graphql',
+                    data=json.dumps({'query': '{ viewer { id } }'}).encode('utf-8'),
+                    headers={
+                        'User-Agent': user_agent,
+                        'Content-Type': 'application/json',
+                        'X-CSRF-Token': csrf_token
+                    }
+                )
+                with opener.open(viewer_req, timeout=5) as v_resp:
+                    v_data = json.loads(v_resp.read().decode('utf-8'))
+                    viewer_id = v_data.get('data', {}).get('viewer', {}).get('id')
+                
+                # Fetch viewer library entries across all statuses
+                lib_query = {
+                    "query": """query {
+                      w: viewer { library(statuses: [WATCHING, REWATCHING], first: 250) { nodes { status episodesWatched anime { databaseId } } } }
+                      p: viewer { library(statuses: [PLANNING, CONSIDERING], first: 250) { nodes { status episodesWatched anime { databaseId } } } }
+                      c: viewer { library(statuses: [COMPLETED], first: 250) { nodes { status episodesWatched anime { databaseId } } } }
+                      o: viewer { library(statuses: [PAUSED, DROPPED, SKIPPING], first: 250) { nodes { status episodesWatched anime { databaseId } } } }
+                    }"""
+                }
+                lib_req = urllib.request.Request(
+                    'https://www.livechart.me/graphql',
+                    data=json.dumps(lib_query).encode('utf-8'),
+                    headers={
+                        'User-Agent': user_agent,
+                        'Content-Type': 'application/json',
+                        'X-CSRF-Token': csrf_token
+                    }
+                )
+                with opener.open(lib_req, timeout=5) as l_resp:
+                    l_data = json.loads(l_resp.read().decode('utf-8'))
+                    for group_data in l_data.get('data', {}).values():
+                        lib_obj = group_data.get('library', {})
+                        for n in lib_obj.get('nodes', []):
+                            db_id = n.get('anime', {}).get('databaseId')
+                            if db_id:
+                                try:
+                                    user_library_map[int(db_id)] = (n.get('status', '').lower(), int(n.get('episodesWatched', 0)))
+                                except (ValueError, TypeError):
+                                    pass
+        except Exception as e:
+            print(f"DEBUG: GraphQL library fetch skipped: {e}", file=sys.stderr)
         
         results = []
         days = soup.find_all('div', class_='lc-timetable-day')
@@ -495,6 +574,17 @@ def get_livechart_data(date_str, browser_type="firefox"):
                         icon_img = action_btn.find('img')
                         if icon_img:
                             source_icon = icon_img.get('src') or icon_img.get('data-src') or ""
+                        if not source_icon:
+                            style = (action_btn.get('style') or "") + " "
+                            inner_div = action_btn.find('div')
+                            if inner_div:
+                                style += inner_div.get('style') or ""
+                            mask_match = re.search(r'url\((.*?)\)', style)
+                            if mask_match:
+                                raw_url = mask_match.group(1).strip()
+                                if raw_url.startswith(('"', "'")) and raw_url.endswith(('"', "'")):
+                                    raw_url = raw_url[1:-1]
+                                source_icon = raw_url
                     
                     time_val = ep_label.strip() if ep_label else "TBA"
 
@@ -503,8 +593,22 @@ def get_livechart_data(date_str, browser_type="firefox"):
                         anime_link = "https://www.livechart.me" + title_elem.get('href')
 
                     # Library Status Extraction
-                    # Priority 1: data-library-status attribute directly on the anime block div
-                    library_status = block.get('data-library-status', '').strip()
+                    block_aid_raw = block.get('data-schedule-anime-id') or block.get('data-anime-id')
+                    block_aid = None
+                    if block_aid_raw:
+                        try:
+                            block_aid = int(block_aid_raw)
+                        except (ValueError, TypeError):
+                            pass
+                    
+                    user_episodes_watched = None
+                    if block_aid and block_aid in user_library_map:
+                        g_status, g_watched = user_library_map[block_aid]
+                        library_status = g_status
+                        user_episodes_watched = g_watched
+                    else:
+                        # Priority 1: data-library-status attribute directly on the anime block div
+                        library_status = block.get('data-library-status', '').strip()
                     
                     if not library_status or library_status == '':
                         library_status = "none"
@@ -560,7 +664,9 @@ def get_livechart_data(date_str, browser_type="firefox"):
                     # Determine if the currently scheduled episode is considered "watched"
                     is_watched = False
                     
-                    if library_status == "completed":
+                    if user_episodes_watched is not None and card_ep_num > 0:
+                        is_watched = (card_ep_num <= user_episodes_watched)
+                    elif library_status == "completed":
                         is_watched = True
                     else:
                         for btn in block.find_all('button', class_='lc-tt-progress-button'):
