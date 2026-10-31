@@ -1032,33 +1032,94 @@ PluginComponent {
                     height: 540
                     clip: true
 
-                    // Material 3 Expressive Background Shapes
+                    // Material 3 Expressive Background Shapes (rotating in place across different positions)
                     Item {
                         anchors.fill: parent
                         z: -1
-                        opacity: 0.6
-                        
-                        Repeater {
-                            id: shapeRepeater
-                            model: Math.floor(Math.random() * 3) + 3 // Initialize with 3-5 shapes
-                            
-                            // Re-randomize when error view becomes visible
-                            Connections {
-                                target: errorView
-                                function onVisibleChanged() {
-                                    if (errorView.visible) {
-                                        shapeRepeater.model = Math.floor(Math.random() * 3) + 3;
-                                    }
-                                }
-                            }
+                        opacity: 0.25
 
-                            ExpressiveShape {
-                                // Randomize base parameters for more variety
-                                size: 180 + Math.random() * 200
-                                duration: 15000 + Math.random() * 15000
-                                color1: index % 2 === 0 ? Theme.primary : Theme.secondary
-                                color2: index % 3 === 0 ? "transparent" : (index % 2 === 0 ? Theme.secondary : Theme.primary)
-                                opacity: 0.3 + (Math.random() * 0.2)
+                        DMaterialShape {
+                            shape: "cookie4"
+                            color: Theme.primary
+                            implicitWidth: 160
+                            implicitHeight: 160
+                            x: 40
+                            y: 30
+
+                            RotationAnimation on rotation {
+                                from: 0
+                                to: 360
+                                duration: 24000
+                                loops: Animation.Infinite
+                                running: errorView.visible
+                            }
+                        }
+
+                        DMaterialShape {
+                            shape: "sunny"
+                            color: Theme.secondary
+                            implicitWidth: 140
+                            implicitHeight: 140
+                            x: parent.width - 180
+                            y: 40
+
+                            RotationAnimation on rotation {
+                                from: 360
+                                to: 0
+                                duration: 28000
+                                loops: Animation.Infinite
+                                running: errorView.visible
+                            }
+                        }
+
+                        DMaterialShape {
+                            shape: "clover4"
+                            color: Theme.primary
+                            implicitWidth: 150
+                            implicitHeight: 150
+                            x: 60
+                            y: parent.height - 180
+
+                            RotationAnimation on rotation {
+                                from: 0
+                                to: 360
+                                duration: 20000
+                                loops: Animation.Infinite
+                                running: errorView.visible
+                            }
+                        }
+
+                        DMaterialShape {
+                            shape: "cookie7"
+                            color: Theme.secondary
+                            implicitWidth: 170
+                            implicitHeight: 170
+                            x: parent.width - 200
+                            y: parent.height - 200
+
+                            RotationAnimation on rotation {
+                                from: 360
+                                to: 0
+                                duration: 32000
+                                loops: Animation.Infinite
+                                running: errorView.visible
+                            }
+                        }
+
+                        DMaterialShape {
+                            shape: "arch"
+                            color: Theme.primary
+                            implicitWidth: 130
+                            implicitHeight: 130
+                            x: (parent.width - 130) / 2
+                            y: parent.height - 150
+
+                            RotationAnimation on rotation {
+                                from: 0
+                                to: 360
+                                duration: 26000
+                                loops: Animation.Infinite
+                                running: errorView.visible
                             }
                         }
                     }
@@ -1220,40 +1281,17 @@ PluginComponent {
                                     }
                                 }
                                 
-                                DankButton {
+                                DButton {
                                     id: retryBtn
                                     Layout.alignment: Qt.AlignHCenter
-                                    width: 160
-                                    height: 48
-                                    
-                                    scale: hovered ? 1.05 : 1.0
-                                    Behavior on scale { NumberAnimation { duration: 150; easing.type: Theme.standardEasing } }
-
+                                    text: "Retry Now"
+                                    iconName: "refresh"
+                                    buttonHeight: Theme.buttonHeightM || 44
+                                    backgroundColor: Theme.primary
+                                    textColor: Theme.buttonText
                                     onClicked: {
                                         root.isLoading = true;
                                         root.triggerFetch("Retrying...");
-                                    }
-
-                                    Row {
-                                        anchors.centerIn: parent
-                                        spacing: Theme.spacingS
-                                        DankIcon {
-                                            id: retryBtnIcon
-                                            name: "refresh"
-                                            size: 20
-                                            color: Theme.buttonText
-                                            anchors.verticalCenter: parent.verticalCenter
-                                            
-                                            rotation: retryBtn.hovered ? 180 : 0
-                                            Behavior on rotation { NumberAnimation { duration: 400; easing.type: Easing.OutBack } }
-                                        }
-                                        StyledText {
-                                            text: "Retry Now"
-                                            color: Theme.buttonText
-                                            font.pixelSize: Theme.fontSizeMedium
-                                            font.weight: Font.Medium
-                                            anchors.verticalCenter: parent.verticalCenter
-                                        }
                                     }
                                 }
                             }

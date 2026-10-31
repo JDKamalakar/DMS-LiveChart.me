@@ -3,7 +3,7 @@
     "name": "LiveChart Schedule",
     "description": "Displays LiveChart anime schedule data. Inspects local browser cookies (Firefox/Zen/Chrome) to sync watchlist.",
     "category": "utilities",
-    "version": "2.0.0",
+    "version": "2.0.1",
     "author": "JDKamalakar",
     "icon": "view_timeline",
     "type": "widget",
