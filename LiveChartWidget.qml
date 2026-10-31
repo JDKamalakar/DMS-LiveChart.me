@@ -401,6 +401,10 @@ PluginComponent {
             onStreamFinished: {
                 root.isLoading = false;
                 const output = text.trim();
+                if (!output) {
+                    console.warn("LiveChart: Received empty stdout stream");
+                    return;
+                }
                 try {
                     const parsed = JSON.parse(output);
                     if (parsed.success) {
@@ -420,8 +424,16 @@ PluginComponent {
                 }
             }
         }
+
+        stderr: StdioCollector {
+            onStreamFinished: {
+                if (text && text.trim()) {
+                    console.warn("LiveChart stderr:", text.trim());
+                }
+            }
+        }
         
-        onExited: {
+        onExited: (exitCode) => {
             if (exitCode !== 0) {
                 root.isLoading = false;
                 if (root.fullScheduleData.length === 0 && root.errorType === "") {

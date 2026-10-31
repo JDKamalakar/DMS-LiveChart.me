@@ -748,6 +748,12 @@ def get_livechart_data(date_str, browser_type="firefox"):
                             "progressTarget": progress_target
                         })
             
+            day_name_map = {
+                "Sunday": "Sun", "Monday": "Mon", "Tuesday": "Tue",
+                "Wednesday": "Wed", "Thursday": "Thu", "Friday": "Fri", "Saturday": "Sat"
+            }
+            day_name = day_name_map.get(day_name, day_name)
+
             results.append({
                 "day": day_name,
                 "date": date_name,
@@ -760,8 +766,7 @@ def get_livechart_data(date_str, browser_type="firefox"):
             "data": results
         }))
         sys.stdout.flush()
-        # Force exit to prevent multiprocessing atexit handler from hanging on deadlocked DBus children
-        os._exit(0)
+        sys.exit(0)
 
     except Exception as e:
         import traceback
