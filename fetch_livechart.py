@@ -438,31 +438,27 @@ def get_livechart_data(date_str, browser_type="firefox"):
         # Extract user library (active watched count) via GraphQL if authenticated session is present
         user_library_map = {} # databaseId -> (status, episodesWatched)
         try:
-            csrf_meta = soup.find('meta', {'name': 'csrf-token'})
+            csrf_meta = soup.find('meta', {'name': 'csrf-token+graphql'}) or soup.find('meta', {'name': 'csrf-token'})
             csrf_token = csrf_meta['content'] if csrf_meta else ''
             
             if csrf_token:
-                # 1. Fetch viewer ID
-                viewer_req = urllib.request.Request(
-                    'https://www.livechart.me/graphql',
-                    data=json.dumps({'query': '{ viewer { id } }'}).encode('utf-8'),
-                    headers={
-                        'User-Agent': user_agent,
-                        'Content-Type': 'application/json',
-                        'X-CSRF-Token': csrf_token
-                    }
-                )
-                with opener.open(viewer_req, timeout=5) as v_resp:
-                    v_data = json.loads(v_resp.read().decode('utf-8'))
-                    viewer_id = v_data.get('data', {}).get('viewer', {}).get('id')
-                
-                # Fetch viewer library entries across all statuses
+                # Fetch viewer library entries across all active statuses using GraphQL
                 lib_query = {
                     "query": """query {
-                      w: viewer { library(statuses: [WATCHING, REWATCHING], first: 250) { nodes { status episodesWatched anime { databaseId } } } }
-                      p: viewer { library(statuses: [PLANNING, CONSIDERING], first: 250) { nodes { status episodesWatched anime { databaseId } } } }
-                      c: viewer { library(statuses: [COMPLETED], first: 250) { nodes { status episodesWatched anime { databaseId } } } }
-                      o: viewer { library(statuses: [PAUSED, DROPPED, SKIPPING], first: 250) { nodes { status episodesWatched anime { databaseId } } } }
+                      viewer {
+                        w: library(status: { in: [WATCHING, REWATCHING] }, first: 100) {
+                          nodes { status episodesWatched anime { databaseId } }
+                        }
+                        p: library(status: { in: [PLANNING, CONSIDERING] }, first: 100) {
+                          nodes { status episodesWatched anime { databaseId } }
+                        }
+                        o: library(status: { in: [PAUSED, DROPPED, SKIPPING] }, first: 100) {
+                          nodes { status episodesWatched anime { databaseId } }
+                        }
+                        c: library(status: { in: [COMPLETED] }, first: 100) {
+                          nodes { status episodesWatched anime { databaseId } }
+                        }
+                      }
                     }"""
                 }
                 lib_req = urllib.request.Request(
@@ -474,11 +470,12 @@ def get_livechart_data(date_str, browser_type="firefox"):
                         'X-CSRF-Token': csrf_token
                     }
                 )
-                with opener.open(lib_req, timeout=5) as l_resp:
+                with opener.open(lib_req, timeout=10) as l_resp:
                     l_data = json.loads(l_resp.read().decode('utf-8'))
-                    for group_data in l_data.get('data', {}).values():
-                        lib_obj = group_data.get('library', {})
-                        for n in lib_obj.get('nodes', []):
+                    for group_data in l_data.get('data', {}).get('viewer', {}).values():
+                        if not group_data:
+                            continue
+                        for n in group_data.get('nodes', []):
                             db_id = n.get('anime', {}).get('databaseId')
                             if db_id:
                                 try:
@@ -493,12 +490,31 @@ def get_livechart_data(date_str, browser_type="firefox"):
         
         for daily_section in days:
             header_el = daily_section.find('h2')
-            if not header_el: continue
+            day_name = "Unknown"
+            date_name = ""
             
-            # e.g. "Sun\n        Mar 8"
-            raw_text = header_el.text.strip().split('\n')
-            day_name = raw_text[0].strip() if len(raw_text) > 0 else "Unknown"
-            date_name = raw_text[-1].strip() if len(raw_text) > 1 else ""
+            if header_el:
+                # Legacy e.g. "Sun\n        Mar 8"
+                raw_text = header_el.text.strip().split('\n')
+                day_name = raw_text[0].strip() if len(raw_text) > 0 else "Unknown"
+                date_name = raw_text[-1].strip() if len(raw_text) > 1 else ""
+            else:
+                # Modern Material 3 timetable heading
+                heading_el = daily_section.find('div', class_=re.compile(r'lc-timetable-day__heading'))
+                if heading_el:
+                    times = heading_el.find_all('time')
+                    if len(times) > 0:
+                        day_name = times[0].text.strip()
+                    if len(times) > 1:
+                        date_name = times[1].text.strip()
+                else:
+                    times = daily_section.find_all('time')
+                    if times:
+                        day_name = times[0].text.strip()
+                        if len(times) > 1:
+                            date_name = times[1].text.strip()
+                    else:
+                        continue
             
             anime_list = []
             slots = daily_section.find_all('div', class_='lc-timetable-timeslot')
@@ -507,32 +523,38 @@ def get_livechart_data(date_str, browser_type="firefox"):
                 # Get shared slot-level data
                 timestamp = slot.get('data-timestamp') or ""
                 
-                countdown_elem = slot.find('span', class_='lc-tt-countdown') or slot.find('time', class_='lc-tt-countdown')
+                countdown_elem = slot.find('span', class_=re.compile(r'countdown')) or slot.find('time', class_=re.compile(r'countdown'))
                 countdown = countdown_elem.text.strip() if countdown_elem else ''
 
                 # Iterate over individual anime blocks within each timeslot
-                # A single timeslot can contain multiple anime blocks
-                anime_blocks = slot.find_all('div', class_='lc-timetable-anime-block')
+                # Filter out nested sub-elements that might also carry lc-timetable-anime-block prefix
+                raw_blocks = slot.find_all('div', class_='lc-timetable-anime-block')
+                anime_blocks = [
+                    b for b in raw_blocks
+                    if b.get('data-anime-item-id') or b.get('data-schedule-anime-id') or b.get('data-anime-id') or b.find('a', class_=re.compile(r'anime-title|anime-block__title'))
+                ]
                 
                 if not anime_blocks:
                     # Fallback: try to extract from slot directly (legacy timeslots)
-                    title_elem = slot.find('a', class_='lc-tt-anime-title')
+                    title_elem = slot.find('a', class_=re.compile(r'anime-title|anime-block__title'))
                     if not title_elem:
                         continue
                     anime_blocks = [slot]
                 
                 for block in anime_blocks:
-                    title_elem = block.find('a', class_='lc-tt-anime-title')
+                    title_elem = block.find('a', class_=re.compile(r'anime-title|anime-block__title')) or block.find('a', href=re.compile(r'^/anime/\d+'))
                     title = title_elem.text.strip() if title_elem else 'Unknown Title'
                     
                     # Find episode label within this block
-                    release_elem = block.find('a', class_='lc-tt-release-label')
+                    release_elem = block.find('a', class_=re.compile(r'release-label|anime-block__label'))
                     release_label = release_elem.text.strip() if release_elem else ""
                     
-                    # Get the EP span (first span with font-medium class inside release label)
-                    ep_span = release_elem.find('span', class_='font-medium') if release_elem else None
+                    # Get the EP label (strong tag or span inside release label)
+                    ep_span = None
+                    if release_elem:
+                        ep_span = release_elem.find('strong') or release_elem.find('span', class_='font-medium') or release_elem.find('span')
                     if not ep_span:
-                        ep_span = block.find('span')
+                        ep_span = block.find('strong') or block.find('span')
                     ep_label = ep_span.text.strip() if ep_span else ""
                     
                     if (ep_label or release_label) and ("TBA" not in ep_label and "TBA" not in release_label):
@@ -540,7 +562,7 @@ def get_livechart_data(date_str, browser_type="firefox"):
                     else:
                         time_str = "TBA"
         
-                    img_elem = block.find('img', class_='lc-tt-poster')
+                    img_elem = block.find('img', class_=re.compile(r'poster|anime-block__poster'))
                     if not img_elem:
                         img_elem = block.find('img')
                     img_src = ""
@@ -552,7 +574,7 @@ def get_livechart_data(date_str, browser_type="firefox"):
                         img_src = download_image(img_src)
                         
                     # Try to get source icon and domain
-                    action_btn = block.find('a', class_='lc-tt-action-button')
+                    action_btn = block.find('a', class_=re.compile(r'action-button|anime-block__action-button'))
                     watch_link = action_btn.get('href') if action_btn else ''
                     if watch_link and watch_link.startswith('/'):
                         watch_link = "https://www.livechart.me" + watch_link
@@ -593,7 +615,7 @@ def get_livechart_data(date_str, browser_type="firefox"):
                         anime_link = "https://www.livechart.me" + title_elem.get('href')
 
                     # Library Status Extraction
-                    block_aid_raw = block.get('data-schedule-anime-id') or block.get('data-anime-id')
+                    block_aid_raw = block.get('data-anime-item-id') or block.get('data-schedule-anime-id') or block.get('data-anime-id')
                     block_aid = None
                     if block_aid_raw:
                         try:
@@ -648,11 +670,22 @@ def get_livechart_data(date_str, browser_type="firefox"):
                             card_ep_num = int(ep_match.group(1))
                     
                     if card_ep_num == 0:
-                        ranges_str = block.get('data-schedule-anime-ranges', '')
-                        if ranges_str:
-                            range_match = re.search(r'\[(\d+),\s*(\d+)\]', ranges_str)
-                            if range_match:
-                                card_ep_num = int(range_match.group(2))
+                        prog_div = block.find('div', class_=re.compile(r'my-progress|viewingProgression'))
+                        ranges_attr = prog_div.get('data-viewing-progression-episode-ranges-value', '') if prog_div else ''
+                        if ranges_attr:
+                            try:
+                                parsed_ranges = json.loads(ranges_attr)
+                                if parsed_ranges and len(parsed_ranges[0]) >= 5:
+                                    card_ep_num = int(parsed_ranges[0][4])
+                            except Exception:
+                                pass
+                        
+                        if card_ep_num == 0:
+                            ranges_str = block.get('data-schedule-anime-ranges', '')
+                            if ranges_str:
+                                range_match = re.search(r'\[(\d+),\s*(\d+)\]', ranges_str)
+                                if range_match:
+                                    card_ep_num = int(range_match.group(2))
                     
                     user_target_ep = 0 # The episode the user needs to watch NEXT
                     progress_btn = block.find('button', title=lambda t: t and t.startswith('Progress to'))
@@ -660,6 +693,9 @@ def get_livechart_data(date_str, browser_type="firefox"):
                         prog_match = re.search(r'Progress to (\d+)', progress_btn.get('title', ''))
                         if prog_match:
                             user_target_ep = int(prog_match.group(1))
+
+                    if user_target_ep == 0 and user_episodes_watched is not None:
+                        user_target_ep = user_episodes_watched + 1
 
                     # Determine if the currently scheduled episode is considered "watched"
                     is_watched = False
@@ -688,9 +724,9 @@ def get_livechart_data(date_str, browser_type="firefox"):
                                     is_watched = True
                                     break
 
-                    has_progress = user_target_ep > 0 or not is_watched
-                    current_progress = user_target_ep - 1 if user_target_ep > 0 else 0
+                    current_progress = user_episodes_watched if user_episodes_watched is not None else (user_target_ep - 1 if user_target_ep > 0 else 0)
                     progress_target = user_target_ep
+                    has_progress = user_target_ep > 0 or not is_watched
 
                     if title != 'Unknown Title' and time_str != 'TBA':
                         anime_list.append({
