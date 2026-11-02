@@ -44,6 +44,7 @@ PluginComponent {
     property string dynamicDisplayMode: "next" // toggles between next and recent
     property int daysToShow: parseInt(pluginData.daysToShow || "7", 10)
     property int startDayOffset: parseInt(pluginData.startDay || "0", 10)
+    property bool showInfoNotes: pluginData.showInfoNotes !== undefined ? (pluginData.showInfoNotes === true || pluginData.showInfoNotes === "true") : true
 
     // Calculate theme mode dynamically
     readonly property bool isDarkTheme: (Theme.surface.r * 0.299 + Theme.surface.g * 0.587 + Theme.surface.b * 0.114) < 0.5
@@ -79,6 +80,11 @@ PluginComponent {
         root.livechartIconClickAction = pluginData.livechartIconClickAction || "schedule";
         root.dankbarPill = pluginData.dankbarPill || "total_count";
         root.dankbarLimit = pluginData.dankbarLimit !== undefined ? parseInt(pluginData.dankbarLimit) : 1;
+        let newShowNotes = pluginData.showInfoNotes !== undefined ? (pluginData.showInfoNotes === true || pluginData.showInfoNotes === "true") : true;
+        if (newShowNotes !== root.showInfoNotes) {
+            root.showInfoNotes = newShowNotes;
+            root.updateScheduleData();
+        }
     }
 
     onUpdateIntervalMsChanged: {
@@ -136,7 +142,13 @@ PluginComponent {
             root.scheduleData = [];
             return;
         }
-        const limitedData = root.fullScheduleData.slice(0, root.daysToShow);
+        const limitedData = root.fullScheduleData.slice(0, root.daysToShow).map(day => {
+            const filteredShows = (day.shows || []).filter(show => {
+                if (show.isInfoNote && !root.showInfoNotes) return false;
+                return true;
+            });
+            return Object.assign({}, day, { shows: filteredShows });
+        });
         root.scheduleData = limitedData;
         let count = 0;
         let targetIndex = 0;
@@ -253,7 +265,8 @@ PluginComponent {
         let todayCount = 0;
         for (let i = 0; i < root.fullScheduleData.length; i++) {
             if (root.fullScheduleData[i].day === root.currentDayName) {
-                todayCount = root.fullScheduleData[i].shows.length;
+                let sList = root.fullScheduleData[i].shows || [];
+                todayCount = sList.filter(s => !s.isInfoNote).length;
                 break;
             }
         }
@@ -263,7 +276,8 @@ PluginComponent {
         if (root.dankbarPill === "total_count") {
             let totalCount = 0;
             for (let i = 0; i < root.scheduleData.length; i++) {
-                totalCount += root.scheduleData[i].shows.length;
+                let sList = root.scheduleData[i].shows || [];
+                totalCount += sList.filter(s => !s.isInfoNote).length;
             }
             return `Anime (${totalCount})`;
         }
@@ -279,6 +293,7 @@ PluginComponent {
             let day = root.fullScheduleData[i];
             for (let j = 0; j < day.shows.length; j++) {
                 let show = day.shows[j];
+                if (show.isInfoNote) continue;
                 let ts = parseFloat(show.timestamp);
                 let diff = ts - root.currentTime;
                 
@@ -1677,6 +1692,7 @@ PluginComponent {
                                                 property bool hasStatus: modelData.libraryStatus !== "none" && modelData.libraryStatus !== "" && modelData.libraryStatus !== undefined
                                                 
                                                 property color statusColor: {
+                                                    if (modelData.isInfoNote) return Theme.warning || "#FFC107";
                                                     if (!hasStatus) return Theme.primary;
                                                     switch(modelData.libraryStatus) {
                                                         case "watching": return Theme.success || "#4CAF50";
@@ -1719,6 +1735,11 @@ PluginComponent {
                                                         if (root.cardClickAction !== "none") cardRipple.trigger(mouse.x, mouse.y);
                                                     }
                                                     onClicked: {
+                                                        if (modelData.isInfoNote) {
+                                                            if (modelData.scheduleLink) root.openUrl(modelData.scheduleLink);
+                                                            else if (modelData.animeLink) root.openUrl(modelData.animeLink);
+                                                            return;
+                                                        }
                                                         if (root.cardClickAction === "anime_entry" && modelData.animeLink) {
                                                             root.openUrl(modelData.animeLink)
                                                         } else if (root.cardClickAction === "watch_page" && modelData.watchLink) {
@@ -1806,6 +1827,7 @@ PluginComponent {
                                                           DankIcon {
                                                               id: statusIcon
                                                               name: {
+                                                                  if (modelData.isInfoNote) return "info";
                                                                   switch (modelData.libraryStatus) {
                                                                       case "watching": return "visibility";
                                                                       case "rewatching": return "replay";
@@ -1825,7 +1847,7 @@ PluginComponent {
                                                               height: 20
                                                               anchors.centerIn: parent
                                                               anchors.verticalCenterOffset: -1 // Shift up for visual balance in bookmark
-                                                              visible: modelData.libraryStatus !== "none" || bookmarkMA.containsMouse
+                                                              visible: modelData.isInfoNote || modelData.libraryStatus !== "none" || bookmarkMA.containsMouse
                                                               
                                                               
                                                               opacity: bookmarkMA.containsMouse ? 1.0 : 0.8
@@ -1833,7 +1855,7 @@ PluginComponent {
 
                                                           // Default bookmark icon for "none" status if hovered (optional, fallback)
                                                           DankIcon {
-                                                              visible: modelData.libraryStatus === "none" && !bookmarkMA.containsMouse
+                                                              visible: !modelData.isInfoNote && modelData.libraryStatus === "none" && !bookmarkMA.containsMouse
                                                               name: "bookmark-outline"
                                                               size: 20
                                                               color: Theme.surfaceVariantText
@@ -1927,6 +1949,19 @@ PluginComponent {
                                                                 anchors.fill: parent
                                                                 source: modelData.image || ""
                                                                 fillMode: Image.PreserveAspectCrop
+                                                                visible: source.toString() !== ""
+                                                            }
+                                                            Rectangle {
+                                                                anchors.fill: parent
+                                                                color: Theme.withAlpha(Theme.surfaceContainerHighest, 0.5)
+                                                                visible: !modelData.image || modelData.image === ""
+                                                                DankIcon {
+                                                                    anchors.centerIn: parent
+                                                                    name: modelData.isInfoNote ? "event_busy" : "image"
+                                                                    size: 28
+                                                                    color: modelData.isInfoNote ? (Theme.warning || "#FFC107") : Theme.surfaceVariantText
+                                                                    opacity: 0.7
+                                                                }
                                                             }
                                                         }
 
@@ -2009,9 +2044,9 @@ PluginComponent {
 
                                                             DankIcon {
                                                                 anchors.centerIn: parent
-                                                                name: "link"
+                                                                name: modelData.isInfoNote ? "info" : "link"
                                                                 size: 16
-                                                                color: Theme.withAlpha(Theme.buttonBg, 0.7)
+                                                                color: modelData.isInfoNote ? (Theme.warning || "#FFC107") : Theme.withAlpha(Theme.buttonBg, 0.7)
                                                                 visible: watchIcon.source.toString() === ""
                                                             }
 
@@ -2058,6 +2093,17 @@ PluginComponent {
                                                             wrapMode: Text.Wrap
                                                             elide: Text.ElideRight
                                                         }
+
+                                                        StyledText {
+                                                            Layout.fillWidth: true
+                                                            text: modelData.noteText || ""
+                                                            font.pixelSize: Theme.fontSizeSmall
+                                                            color: Theme.surfaceVariantText
+                                                            wrapMode: Text.Wrap
+                                                            maximumLineCount: 3
+                                                            elide: Text.ElideRight
+                                                            visible: Boolean(modelData.isInfoNote && modelData.noteText)
+                                                        }
                                                     } // ColumnLayout (Info)
                                                 } // RowLayout (Main Content)
 
@@ -2074,7 +2120,7 @@ PluginComponent {
                                             color: "white"
                                             border.width: 3
                                             border.color: Qt.rgba(Theme.surfaceContainer.r, Theme.surfaceContainer.g, Theme.surfaceContainer.b, 1)
-                                            visible: !modelData.isWatched
+                                            visible: !modelData.isWatched && !modelData.isInfoNote
                                             z: 30
 
                                             // EDIT POSITION HERE:

@@ -484,6 +484,17 @@ def get_livechart_data(date_str, browser_type="firefox"):
                                     pass
         except Exception as e:
             print(f"DEBUG: GraphQL library fetch skipped: {e}", file=sys.stderr)
+
+        # Pre-cache poster images across all anime blocks to enrich scheduling info notes
+        poster_cache = {}
+        for blk in soup.find_all('div', class_='lc-timetable-anime-block'):
+            p_aid = blk.get('data-anime-item-id') or blk.get('data-schedule-anime-id') or blk.get('data-anime-id')
+            if p_aid and p_aid not in poster_cache:
+                p_img = blk.find('img', class_=re.compile(r'poster|anime-block__poster')) or blk.find('img')
+                if p_img:
+                    p_src = p_img.get('src') or p_img.get('data-src') or ''
+                    if p_src:
+                        poster_cache[str(p_aid)] = p_src
         
         results = []
         days = soup.find_all('div', class_='lc-timetable-day')
@@ -526,22 +537,85 @@ def get_livechart_data(date_str, browser_type="firefox"):
                 countdown_elem = slot.find('span', class_=re.compile(r'countdown')) or slot.find('time', class_=re.compile(r'countdown'))
                 countdown = countdown_elem.text.strip() if countdown_elem else ''
 
-                # Iterate over individual anime blocks within each timeslot
-                # Filter out nested sub-elements that might also carry lc-timetable-anime-block prefix
-                raw_blocks = slot.find_all('div', class_='lc-timetable-anime-block')
-                anime_blocks = [
-                    b for b in raw_blocks
-                    if b.get('data-anime-item-id') or b.get('data-schedule-anime-id') or b.get('data-anime-id') or b.find('a', class_=re.compile(r'anime-title|anime-block__title'))
-                ]
-                
-                if not anime_blocks:
-                    # Fallback: try to extract from slot directly (legacy timeslots)
+                content_container = slot.find('div', class_='lc-timetable-timeslot__content')
+                elements_to_process = []
+                if content_container:
+                    for child in content_container.children:
+                        if not getattr(child, 'name', None):
+                            continue
+                        classes = child.get('class', [])
+                        if 'lc-timetable-timeslot__note' in classes:
+                            elements_to_process.append(('note', child))
+                        elif 'lc-timetable-anime-block' in classes:
+                            elements_to_process.append(('anime', child))
+
+                if not elements_to_process:
+                    raw_blocks = slot.find_all('div', class_='lc-timetable-anime-block')
+                    for b in raw_blocks:
+                        if b.get('data-anime-item-id') or b.get('data-schedule-anime-id') or b.get('data-anime-id') or b.find('a', class_=re.compile(r'anime-title|anime-block__title')):
+                            elements_to_process.append(('anime', b))
+                    for n in slot.find_all('div', class_='lc-timetable-timeslot__note'):
+                        elements_to_process.append(('note', n))
+
+                if not elements_to_process:
                     title_elem = slot.find('a', class_=re.compile(r'anime-title|anime-block__title'))
-                    if not title_elem:
+                    if title_elem:
+                        elements_to_process.append(('anime', slot))
+
+                for elem_type, block in elements_to_process:
+                    if elem_type == 'note':
+                        aid_str = block.get('data-anime-id') or ''
+                        title_a = block.find('a', href=re.compile(r'^/anime/\d+'))
+                        note_title = title_a.get_text(strip=True) if title_a else 'Announcement'
+                        anime_link = "https://www.livechart.me" + title_a.get('href', '') if title_a and title_a.get('href', '').startswith('/') else (title_a.get('href', '') if title_a else '')
+
+                        schedule_a = block.find('a', href=re.compile(r'/schedules/\d+'))
+                        schedule_title = schedule_a.get_text(strip=True) if schedule_a else ''
+                        schedule_link = "https://www.livechart.me" + schedule_a.get('href', '') if schedule_a and schedule_a.get('href', '').startswith('/') else (schedule_a.get('href', '') if schedule_a else '')
+
+                        body_div = block.find(class_=re.compile(r'markdown|text--body-md')) or block.find('p')
+                        note_text = body_div.get_text(strip=True) if body_div else ''
+
+                        time_tag = slot.find('time')
+                        time_val = time_tag.get_text(strip=True) if time_tag else 'TBA'
+
+                        poster_url = poster_cache.get(str(aid_str), '')
+                        if poster_url:
+                            poster_url = download_image(poster_url)
+
+                        library_status = "none"
+                        if aid_str:
+                            try:
+                                aid_int = int(aid_str)
+                                if aid_int in user_library_map:
+                                    library_status = user_library_map[aid_int][0]
+                            except (ValueError, TypeError):
+                                pass
+
+                        anime_list.append({
+                            "isInfoNote": True,
+                            "title": note_title,
+                            "time": time_val,
+                            "episodeInfo": schedule_title,
+                            "image": poster_url,
+                            "watchLink": schedule_link,
+                            "siteDomain": "",
+                            "siteName": schedule_title,
+                            "sourceIcon": "",
+                            "countdown": countdown,
+                            "timestamp": timestamp,
+                            "animeLink": anime_link,
+                            "scheduleLink": schedule_link,
+                            "noteText": note_text,
+                            "animeId": aid_str,
+                            "libraryStatus": library_status,
+                            "isWatched": False,
+                            "hasProgress": False,
+                            "currentProgress": 0,
+                            "progressTarget": 0
+                        })
                         continue
-                    anime_blocks = [slot]
-                
-                for block in anime_blocks:
+
                     title_elem = block.find('a', class_=re.compile(r'anime-title|anime-block__title')) or block.find('a', href=re.compile(r'^/anime/\d+'))
                     title = title_elem.text.strip() if title_elem else 'Unknown Title'
                     

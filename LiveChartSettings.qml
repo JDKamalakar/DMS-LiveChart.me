@@ -569,6 +569,14 @@ PluginSettings {
                     description: "Display seconds in the popout current time highlighter"
                     settingKey: "showSeconds"
                     defaultValue: false
+                }
+
+                SettingsToggleItem {
+                    iconName: "info"
+                    title: "Show Scheduling Notices"
+                    description: "Display announcement and schedule delay cards in the timeline"
+                    settingKey: "showInfoNotes"
+                    defaultValue: true
                     isLast: true
                 }
             }
