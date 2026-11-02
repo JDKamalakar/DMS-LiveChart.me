@@ -655,10 +655,10 @@ PluginSettings {
         // ---------------------------------------------------------------------
         // 5. REQUIRED PACKAGES (Segmented Collapsible Section matching DMS UI)
         // ---------------------------------------------------------------------
-        Item {
+        Column {
             id: depsWrapper
             width: parent.width
-            implicitHeight: depsCol.implicitHeight
+            spacing: Theme.spacingS
 
             property bool expanded: false
             property var depStatus: ({
@@ -701,11 +701,6 @@ PluginSettings {
             Component.onCompleted: {
                 depChecker.running = true;
             }
-
-            Column {
-                id: depsCol
-                width: parent.width
-                spacing: 0
 
                 Item {
                     id: depsHeaderRow
@@ -835,7 +830,176 @@ PluginSettings {
                         }
                     }
                 }
-            }
+
+        }
+
+        // -----------------------------------------------------------------
+        // LOCAL USER CHANGES BACKUP / SYNC AUDIT
+        // -----------------------------------------------------------------
+            Column {
+                id: backupSection
+                width: parent.width
+                spacing: Theme.spacingS
+
+                property bool expanded: false
+                property var backupData: ({})
+                property int entryCount: Object.keys(backupData).length
+
+                Process {
+                    id: backupReader
+                    running: false
+                    stdout: StdioCollector {
+                        onStreamFinished: {
+                            try {
+                                backupSection.backupData = JSON.parse(text.trim()) || {};
+                            } catch (e) {
+                                backupSection.backupData = {};
+                            }
+                        }
+                    }
+                }
+
+                Process {
+                    id: backupCleaner
+                    running: false
+                    onExited: {
+                        backupSection.backupData = {};
+                    }
+                }
+
+                Component.onCompleted: {
+                    backupReader.command = ["cat", "/home/JD/.config/dms/livechart_backup.json"];
+                    backupReader.running = true;
+                }
+
+                    Rectangle {
+                        width: parent.width
+                        height: 52
+                        radius: Theme.cornerRadius
+                        color: Theme.withAlpha(Theme.surfaceContainer, 0.4)
+                        border.width: 1
+                        border.color: Theme.withAlpha(Theme.primary, 0.15)
+
+                        Row {
+                            anchors.left: parent.left
+                            anchors.leftMargin: Theme.spacingM
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: Theme.spacingS
+
+                            DIcon {
+                                name: "history"
+                                size: Theme.iconSize || 20
+                                color: Theme.primary
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+
+                            StyledText {
+                                text: I18n.tr("Local Mutation Backup & Sync History")
+                                font.pixelSize: Theme.fontSizeSmall
+                                font.weight: Font.DemiBold
+                                color: Theme.primary
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                        }
+
+                        Row {
+                            anchors.right: parent.right
+                            anchors.rightMargin: Theme.spacingM
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: 8
+
+                            Rectangle {
+                                width: Math.max(countTxt.implicitWidth + 12, 24)
+                                height: 22
+                                radius: 11
+                                color: Theme.withAlpha(Theme.primary, 0.2)
+                                anchors.verticalCenter: parent.verticalCenter
+                                StyledText {
+                                    id: countTxt
+                                    anchors.centerIn: parent
+                                    text: String(backupSection.entryCount) + " " + I18n.tr("Entries")
+                                    font.pixelSize: 11
+                                    color: Theme.primary
+                                }
+                            }
+
+                            DIcon {
+                                name: "expand_more"
+                                size: Theme.iconSize || 20
+                                color: Theme.surfaceVariantText
+                                rotation: backupSection.expanded ? 180 : 0
+                                anchors.verticalCenter: parent.verticalCenter
+
+                                Behavior on rotation {
+                                    NumberAnimation { duration: 200; easing.type: Easing.OutCubic }
+                                }
+                            }
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                backupSection.expanded = !backupSection.expanded;
+                                if (backupSection.expanded) {
+                                    backupReader.command = ["cat", "/home/JD/.config/dms/livechart_backup.json"];
+                                    backupReader.running = true;
+                                }
+                            }
+                        }
+                    }
+
+                    Item {
+                        width: parent.width
+                        clip: true
+                        height: backupSection.expanded ? backupContent.implicitHeight : 0
+                        opacity: backupSection.expanded ? 1.0 : 0.0
+                        visible: height > 0 || backupSection.expanded
+
+                        Behavior on height {
+                            NumberAnimation { duration: 250; easing.type: Easing.OutCubic }
+                        }
+                        Behavior on opacity {
+                            NumberAnimation { duration: 200; easing.type: Easing.OutQuad }
+                        }
+
+                        SettingsGroup {
+                            id: backupContent
+                            width: parent.width
+
+                            SettingsRow {
+                                iconName: "info"
+                                title: I18n.tr("Tracks user modifications (EP counts & statuses)")
+                                subtitle: I18n.tr("Persisted in ~/.config/dms/livechart_backup.json to detect external reverts or desyncs.")
+                            }
+
+                            Repeater {
+                                model: Object.keys(backupSection.backupData)
+
+                                delegate: SettingsRow {
+                                    property var itemData: backupSection.backupData[modelData] || {}
+                                    iconName: "bookmark"
+                                    iconColor: Theme.primary
+                                    title: itemData.title || ("Anime #" + modelData)
+                                    subtitle: I18n.tr("Status: %1 | Episodes: %2").arg(itemData.status || "N/A").arg(itemData.episodesWatched !== undefined ? itemData.episodesWatched : "N/A")
+                                    trailingBadge: itemData.ignored ? I18n.tr("Ignored") : I18n.tr("Tracked")
+                                    trailingBadgeColor: itemData.ignored ? Theme.surfaceVariantText : Theme.success
+                                }
+                            }
+
+                            SettingsRow {
+                                visible: backupSection.entryCount > 0
+                                iconName: "delete_sweep"
+                                title: I18n.tr("Clear Backup History")
+                                subtitle: I18n.tr("Reset all locally tracked modification states")
+                                clickable: true
+                                onClicked: {
+                                    backupCleaner.command = ["rm", "-f", "/home/JD/.config/dms/livechart_backup.json"];
+                                    backupCleaner.running = true;
+                                }
+                            }
+                        }
+                    }
         }
     }
 }
