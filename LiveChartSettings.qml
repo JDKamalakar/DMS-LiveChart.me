@@ -577,7 +577,244 @@ PluginSettings {
                     description: "Display announcement and schedule delay cards in the timeline"
                     settingKey: "showInfoNotes"
                     defaultValue: true
-                    isLast: true
+                }
+
+                SettingsToggleItem {
+                    id: customStatusFilterToggle
+                    iconName: "filter_list"
+                    title: "Custom Schedule Status Filter"
+                    description: "Filter visible anime by watch status independently of website schedule settings"
+                    settingKey: "useCustomStatusFilter"
+                    defaultValue: false
+                    isLast: !checked
+
+                    Behavior on bottomLeftRadius { NumberAnimation { duration: 150 } }
+                    Behavior on bottomRightRadius { NumberAnimation { duration: 150 } }
+                }
+
+                // Expandable Status Visibility Grid (matching DMS-DNS_Switcher Provider Visibility)
+                Item {
+                    id: statusVisContainer
+                    width: parent.width
+                    property bool expanded: customStatusFilterToggle.checked
+                    height: expanded ? visInnerRect.implicitHeight : 0
+                    opacity: expanded ? 1.0 : 0.0
+                    visible: height > 0 || expanded
+                    clip: true
+
+                    Behavior on height {
+                        NumberAnimation { duration: 250; easing.type: Easing.OutCubic }
+                    }
+                    Behavior on opacity {
+                        NumberAnimation { duration: 200; easing.type: Easing.OutQuad }
+                    }
+
+                    property var statusList: ["watching", "rewatching", "planning", "considering"]
+
+                    function loadValue() {
+                        let saved = root.loadValue("customStatusList", null);
+                        if (saved) {
+                            try {
+                                statusVisContainer.statusList = JSON.parse(saved);
+                            } catch (e) {
+                                statusVisContainer.statusList = ["watching", "rewatching", "planning", "considering"];
+                            }
+                        } else {
+                            statusVisContainer.statusList = ["watching", "rewatching", "planning", "considering"];
+                        }
+                    }
+
+                    Component.onCompleted: loadValue()
+
+                    Rectangle {
+                        id: visInnerRect
+                        width: parent.width
+                        implicitHeight: visInnerCol.implicitHeight + Theme.spacingM * 2
+                        radius: root.innerR
+                        bottomLeftRadius: root.outerR
+                        bottomRightRadius: root.outerR
+                        color: Theme.withAlpha(Theme.surfaceContainerHigh, 0.5)
+                        border.width: 1
+                        border.color: Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, 0.10)
+
+                        Column {
+                            id: visInnerCol
+                            width: parent.width - Theme.spacingM * 2
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            anchors.top: parent.top
+                            anchors.topMargin: Theme.spacingM
+                            spacing: Theme.spacingM
+
+                            RowLayout {
+                                width: parent.width
+                                spacing: Theme.spacingS
+
+                                StyledText {
+                                    text: "Select which anime statuses appear in the schedule timeline"
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    color: Theme.surfaceVariantText
+                                    Layout.fillWidth: true
+                                    wrapMode: Text.WordWrap
+                                }
+
+                                Rectangle {
+                                    width: resetText.implicitWidth + 16
+                                    height: 26
+                                    radius: 13
+                                    color: resetMa.containsMouse ? Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, 0.18) : Qt.rgba(Theme.surfaceContainerHighest.r, Theme.surfaceContainerHighest.g, Theme.surfaceContainerHighest.b, 0.4)
+                                    border.width: 1
+                                    border.color: Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, 0.2)
+
+                                    StyledText {
+                                        id: resetText
+                                        text: "Reset Default"
+                                        font.pixelSize: Theme.fontSizeSmall - 1
+                                        font.weight: Font.Medium
+                                        color: Theme.primary
+                                        anchors.centerIn: parent
+                                    }
+
+                                    MouseArea {
+                                        id: resetMa
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: {
+                                            let def = ["watching", "rewatching", "planning", "considering"];
+                                            statusVisContainer.statusList = def;
+                                            root.saveValue("customStatusList", JSON.stringify(def));
+                                        }
+                                    }
+                                }
+                            }
+
+                            Flow {
+                                id: statusVisFlow
+                                width: parent.width
+                                spacing: Theme.spacingS
+
+                                readonly property var statusDefs: [
+                                    { key: "watching", label: "Watching", icon: "visibility", accent: Theme.success || "#4CAF50" },
+                                    { key: "planning", label: "Planning", icon: "schedule", accent: Theme.secondary || "#80CBC4" },
+                                    { key: "considering", label: "Considering", icon: "help_outline", accent: Theme.warning || "#FFC107" },
+                                    { key: "rewatching", label: "Rewatching", icon: "replay", accent: Theme.success || "#4CAF50" },
+                                    { key: "paused", label: "Paused", icon: "pause_circle", accent: Theme.warning || "#FE8E14" },
+                                    { key: "completed", label: "Completed", icon: "check_circle", accent: Theme.primary },
+                                    { key: "dropped", label: "Dropped", icon: "cancel", accent: Theme.error || "#AC675D" },
+                                    { key: "none", label: "Unmarked / None", icon: "cancel", accent: Theme.surfaceVariantText }
+                                ]
+
+                                Repeater {
+                                    model: statusVisFlow.statusDefs
+                                    delegate: Rectangle {
+                                        id: statusPill
+                                        width: Math.max(0, (statusVisFlow.width - Theme.spacingS) / 2 - 1)
+                                        height: 44
+
+                                        readonly property bool isTopRow: index < 2
+                                        readonly property bool isBottomRow: index >= 6
+                                        readonly property bool isLeftCol: index % 2 === 0
+                                        readonly property bool isRightCol: index % 2 === 1
+
+                                        topLeftRadius: (isTopRow && isLeftCol) ? root.outerR : root.innerR
+                                        topRightRadius: (isTopRow && isRightCol) ? root.outerR : root.innerR
+                                        bottomLeftRadius: (isBottomRow && isLeftCol) ? root.outerR : root.innerR
+                                        bottomRightRadius: (isBottomRow && isRightCol) ? root.outerR : root.innerR
+
+                                        readonly property bool isVisible: statusVisContainer.statusList.indexOf(modelData.key) !== -1
+
+                                        color: !isVisible 
+                                            ? Qt.rgba(Theme.surfaceContainerHighest.r, Theme.surfaceContainerHighest.g, Theme.surfaceContainerHighest.b, 0.4) 
+                                            : Theme.withAlpha(modelData.accent || Theme.primary, 0.15)
+                                        border.color: !isVisible 
+                                            ? Qt.rgba(Theme.outline.r, Theme.outline.g, Theme.outline.b, 0.3) 
+                                            : Theme.withAlpha(modelData.accent || Theme.primary, 0.45)
+                                        border.width: 1
+
+                                        scale: maStatusPill.pressed ? 0.98 : (maStatusPill.containsMouse ? 1.02 : 1.0)
+                                        Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+                                        Behavior on color { ColorAnimation { duration: 150 } }
+                                        Behavior on border.color { ColorAnimation { duration: 150 } }
+
+                                        RowLayout {
+                                            anchors.fill: parent
+                                            anchors.leftMargin: 12
+                                            anchors.rightMargin: 12
+                                            spacing: Theme.spacingS
+
+                                            Item {
+                                                width: 18
+                                                height: 18
+                                                Layout.alignment: Qt.AlignVCenter
+
+                                                DankIcon {
+                                                    name: modelData.icon
+                                                    size: 18
+                                                    color: !statusPill.isVisible ? Theme.surfaceVariantText : (modelData.accent || Theme.primary)
+                                                    anchors.centerIn: parent
+                                                    Behavior on color { ColorAnimation { duration: 150 } }
+                                                }
+                                            }
+
+                                            StyledText {
+                                                text: modelData.label
+                                                Layout.fillWidth: true
+                                                color: !statusPill.isVisible ? Theme.surfaceVariantText : Theme.surfaceText
+                                                font.weight: !statusPill.isVisible ? Font.Normal : Font.Medium
+                                                font.pixelSize: Theme.fontSizeSmall
+                                                elide: Text.ElideRight
+                                                Behavior on color { ColorAnimation { duration: 150 } }
+                                            }
+
+                                            Rectangle {
+                                                width: 26
+                                                height: 26
+                                                radius: 13
+                                                color: !statusPill.isVisible 
+                                                    ? Qt.rgba(Theme.surfaceText.r, Theme.surfaceText.g, Theme.surfaceText.b, 0.05) 
+                                                    : Theme.withAlpha(modelData.accent || Theme.primary, 0.20)
+                                                Behavior on color { ColorAnimation { duration: 150 } }
+
+                                                DankIcon {
+                                                    name: !statusPill.isVisible ? "visibility_off" : "visibility"
+                                                    size: 15
+                                                    color: !statusPill.isVisible ? Theme.surfaceVariantText : (modelData.accent || Theme.primary)
+                                                    anchors.centerIn: parent
+                                                    Behavior on color { ColorAnimation { duration: 150 } }
+                                                }
+                                            }
+                                        }
+
+                                        MouseArea {
+                                            id: maStatusPill
+                                            anchors.fill: parent
+                                            hoverEnabled: true
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: {
+                                                let list = Array.from(statusVisContainer.statusList);
+                                                let idx = list.indexOf(modelData.key);
+                                                if (idx === -1) {
+                                                    list.push(modelData.key);
+                                                } else {
+                                                    list.splice(idx, 1);
+                                                }
+                                                statusVisContainer.statusList = list;
+                                                root.saveValue("customStatusList", JSON.stringify(list));
+                                            }
+                                            onPressed: (m) => ripStatusPill.trigger(m.x, m.y)
+                                        }
+
+                                        DankRipple {
+                                            id: ripStatusPill
+                                            anchors.fill: parent
+                                            cornerRadius: root.innerR
+                                            rippleColor: modelData.accent || Theme.primary
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -729,7 +966,7 @@ PluginSettings {
                         }
                     }
 
-                    DIcon {
+                    DankIcon {
                         anchors.right: parent.right
                         anchors.rightMargin: Theme.spacingM
                         anchors.verticalCenter: parent.verticalCenter
@@ -886,7 +1123,7 @@ PluginSettings {
                             anchors.verticalCenter: parent.verticalCenter
                             spacing: Theme.spacingS
 
-                            DIcon {
+                            DankIcon {
                                 name: "history"
                                 size: Theme.iconSize || 20
                                 color: Theme.primary
@@ -923,7 +1160,7 @@ PluginSettings {
                                 }
                             }
 
-                            DIcon {
+                            DankIcon {
                                 name: "expand_more"
                                 size: Theme.iconSize || 20
                                 color: Theme.surfaceVariantText

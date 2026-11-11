@@ -378,12 +378,18 @@ def download_image(url):
         print(f"DEBUG: Failed to download {url}: {e}", file=sys.stderr)
         return url
 
-def get_livechart_data(date_str, browser_type="firefox"):
+def get_livechart_data(date_str, browser_type="firefox", include_all_statuses=False):
     import datetime
     import multiprocessing
     import tempfile
 
-    url = f"https://www.livechart.me/schedule?layout=timetable&date={date_str}"
+    base_url = f"https://www.livechart.me/schedule?layout=timetable&date={date_str}"
+    if include_all_statuses:
+        all_marks = ['completed', 'rewatching', 'watching', 'planning', 'considering', 'paused', 'dropped', 'skipping', 'unmarked']
+        status_params = '&'.join([f"library_statuses[{s}]=true" for s in all_marks])
+        url = f"{base_url}&{status_params}"
+    else:
+        url = base_url
         
     opener = urllib.request.build_opener()
     user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
@@ -616,6 +622,12 @@ def get_livechart_data(date_str, browser_type="firefox"):
                     total_attr = art.get('data-anime-item-total-episodes') or ''
                     if total_attr.isdigit():
                         total_episodes = int(total_attr)
+                    if total_episodes == 0:
+                        prog_btn = art.find(attrs={'data-progress-increment-button-total-count-value': True})
+                        if prog_btn:
+                            val = prog_btn.get('data-progress-increment-button-total-count-value', '')
+                            if val.isdigit():
+                                total_episodes = int(val)
                     if total_episodes == 0 and release_label:
                         tot_match = re.search(r'/\s*(\d+)', release_label)
                         if tot_match:
@@ -631,6 +643,7 @@ def get_livechart_data(date_str, browser_type="firefox"):
                             "siteDomain": "",
                             "siteName": "",
                             "sourceIcon": "",
+                            "accentColor": "",
                             "countdown": countdown,
                             "timestamp": timestamp,
                             "animeLink": anime_link,
@@ -782,21 +795,37 @@ def get_livechart_data(date_str, browser_type="firefox"):
                             site_name = parts[-1].strip()
 
                     source_icon = ""
+                    accent_color = ""
                     if action_btn:
                         icon_img = action_btn.find('img')
                         if icon_img:
                             source_icon = icon_img.get('src') or icon_img.get('data-src') or ""
+                        style = (action_btn.get('style') or "") + " "
+                        inner_div = action_btn.find('div')
+                        if inner_div:
+                            style += inner_div.get('style') or ""
                         if not source_icon:
-                            style = (action_btn.get('style') or "") + " "
-                            inner_div = action_btn.find('div')
-                            if inner_div:
-                                style += inner_div.get('style') or ""
                             mask_match = re.search(r'url\((.*?)\)', style)
                             if mask_match:
                                 raw_url = mask_match.group(1).strip()
                                 if raw_url.startswith(('"', "'")) and raw_url.endswith(('"', "'")):
                                     raw_url = raw_url[1:-1]
                                 source_icon = raw_url
+                        # Extract accent color if available
+                        m_accent = re.search(r'--lc-contextual-accent-color-[^:]+:\s*([0-9.]+)\s+([0-9.]+)%\s+([0-9.]+)%', style)
+                        if m_accent:
+                            try:
+                                import colorsys
+                                h_val = float(m_accent.group(1))
+                                s_val = float(m_accent.group(2))
+                                l_val = float(m_accent.group(3))
+                                r_val, g_val, b_val = colorsys.hls_to_rgb(h_val / 360.0, l_val / 100.0, s_val / 100.0)
+                                accent_color = '#{:02x}{:02x}{:02x}'.format(int(round(r_val * 255)), int(round(g_val * 255)), int(round(b_val * 255)))
+                            except Exception:
+                                pass
+
+                    if source_icon and source_icon.startswith('http'):
+                        source_icon = download_image(source_icon)
                     
                     time_val = ep_label.strip() if ep_label else "TBA"
 
@@ -924,12 +953,14 @@ def get_livechart_data(date_str, browser_type="firefox"):
                     total_attr = block.get('data-anime-item-total-episodes') or ''
                     if total_attr.isdigit():
                         total_episodes = int(total_attr)
+                    if total_episodes == 0:
+                        prog_btn = block.find(attrs={'data-progress-increment-button-total-count-value': True})
+                        if prog_btn:
+                            val = prog_btn.get('data-progress-increment-button-total-count-value', '')
+                            if val.isdigit():
+                                total_episodes = int(val)
                     if total_episodes == 0 and release_label:
                         tot_match = re.search(r'/\s*(\d+)', release_label)
-                        if tot_match:
-                            total_episodes = int(tot_match.group(1))
-                    if total_episodes == 0:
-                        tot_match = re.search(r'/\s*(\d+)', block.get_text())
                         if tot_match:
                             total_episodes = int(tot_match.group(1))
 
@@ -943,6 +974,7 @@ def get_livechart_data(date_str, browser_type="firefox"):
                             "siteDomain": site_domain,
                             "siteName": site_name,
                             "sourceIcon": source_icon,
+                            "accentColor": accent_color,
                             "countdown": countdown,
                             "timestamp": timestamp,
                             "animeLink": anime_link,
@@ -1146,7 +1178,10 @@ if __name__ == "__main__":
         else:
             date = sys.argv[1] if len(sys.argv) > 1 else "2026-03-01"
             browser = sys.argv[2] if len(sys.argv) > 2 else "firefox"
-            get_livechart_data(date, browser)
+            include_all = False
+            if len(sys.argv) > 3:
+                include_all = sys.argv[3].lower() in ("true", "1", "all", "yes")
+            get_livechart_data(date, browser, include_all)
     except Exception as e:
         import traceback
         err_msg = str(e)

@@ -26,11 +26,14 @@ Elegant implementation of the LiveChart.me Dankbar widget and slide-out panel, s
 
 * **Real-time Tracking**: Seamless integration of LiveChart.me seasonal schedules directly into your shell.
 * **Dankbar Integration**: Clean, minimal status bar indicators that keep you informed about upcoming episodes.
+* **Interactive Episode Progress & Watch Tracking**: Mark episodes watched directly from anime cards, increment progress, update statuses (Watching, Planning, Considering, Completed, Paused, Dropped), and synchronize locally and remotely.
+* **Sync Conflict & Discrepancy Manager**: Dedicated compositor-blurred modal dialog detecting desyncs between locally tracked progress and remote website states, with filter tabs (Episode Desync, Status Changed, All), live marquee titles, and one-click ignore actions.
+* **Custom Schedule Status Filters**: Independent status filter toggle and customizable 2-column visibility grid to view specific statuses (even if excluded in your LiveChart.me website settings).
+* **Local Fallback & Backup Records**: Persistent local history storage protecting your watch history and progress from external server overwrites.
+* **Vector SVG Streaming Icons**: Crisp, bundled vector SVG icons for top anime streaming platforms (Crunchyroll, Netflix, HiDive, Disney+, Hulu, Prime Video, YouTube, etc.) with dark/light mode adaptability.
+* **System Dependencies & Diagnostics**: Built-in inspector in Settings checking Python 3 and required packages (`beautifulsoup4`, `browser-cookie3`, `keyring`) with copyable installation commands.
 * **Premium Pop-up UI**: A modernized, material-style interface with fluid animations, dynamic headers, and card-based layouts.
-* **Smart Interaction**: Hover-driven feedback, status-aware card highlights, and sophisticated micro-animations.
-* **Material Aesthetics**: Premium design tokens and transitions designed to feel native to the Dank Material Shell.
-* **Customizable Experience**: Dedicated settings panel to fine-tune appearance and synchronization behavior.
-* **Local Data Fetching**: Efficiently pulls data from local browser sessions for a personalized experience.
+* **Material Aesthetics**: Native Dank Material Shell tokens, segmented first/mid/last button groups, and smooth spring physics.
 
 </div>
 

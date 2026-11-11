@@ -406,6 +406,7 @@ Item {
             width: parent.width
             height: 540
             spacing: 12
+            clip: true
             
             Repeater {
                 model: widgetRoot.daysToShow
@@ -479,7 +480,7 @@ Item {
         // Schedule List Weekly Horizontal Grid
         DankListView {
             id: mainListView
-            visible: widgetRoot.scheduleData.length > 0
+            visible: !widgetRoot.isLoading && widgetRoot.scheduleData.length > 0
             width: parent.width
             height: 540 // Increased to accommodate headers
             orientation: ListView.Horizontal
@@ -1224,7 +1225,7 @@ Item {
                                                  markWatchedBtn.visible = false;
                                                  var nextEp = modelData.progressTarget || ((modelData.currentProgress || 0) + 1);
                                                  if (modelData.animeId && widgetRoot.updateAnimeProgress) {
-                                                     widgetRoot.updateAnimeProgress(modelData.animeId, nextEp, "WATCHING", modelData.title, modelData.totalEpisodes, modelData.libraryStatus);
+                                                     widgetRoot.updateAnimeProgress(modelData.animeId, nextEp, "WATCHING", modelData.title, modelData.totalEpisodes, modelData.libraryStatus, modelData.image || "");
                                                  } else if (modelData.animeLink) {
                                                      widgetRoot.openUrl(modelData.animeLink);
                                                  }

@@ -3,6 +3,8 @@ import QtQuick.Layouts
 import QtQuick.Window
 import Quickshell
 import Quickshell.Io
+import Quickshell.Wayland
+import Quickshell.Widgets
 import Quickshell.Services.UPower
 
 import qs.Common
@@ -15,6 +17,54 @@ import QtQuick.Effects
 
 PluginComponent {
     id: root
+    pluginId: "liveChartSchedule"
+    pluginService: PluginService
+
+    IpcHandler {
+        target: "liveChartSchedule"
+
+        function triggerConflictModal(): string {
+            if (root.conflictItems.length === 0) {
+                // For testing/debugging, populate dummy conflicts with multiple types if empty
+                root.conflictItems = [
+                    {
+                        animeId: "test_1",
+                        title: "Test Anime Progress Desync (Long Title Marquee Scroll)",
+                        reason: "Progress dropped to EP 4 (recorded: EP 5)",
+                        conflictType: "progress",
+                        hasEpDiff: true,
+                        hasStatusDiff: false,
+                        image: ""
+                    },
+                    {
+                        animeId: "test_2",
+                        title: "Test Anime Status Changed",
+                        reason: "Status changed to 'completed' (recorded: 'watching')",
+                        conflictType: "status",
+                        hasEpDiff: false,
+                        hasStatusDiff: true,
+                        image: ""
+                    },
+                    {
+                        animeId: "test_3",
+                        title: "Test Anime Multiple Desyncs (Both Ep & Status)",
+                        reason: "Progress dropped to EP 2 (recorded: EP 6) • Status changed to 'planning' (recorded: 'watching')",
+                        conflictType: "both",
+                        hasEpDiff: true,
+                        hasStatusDiff: true,
+                        image: ""
+                    }
+                ];
+            }
+            root.openConflictModal();
+            return "SUCCESS";
+        }
+
+        function closeConflictModal(): string {
+            root.dismissConflictModal();
+            return "SUCCESS";
+        }
+    }
     
     // Configurable properties via pluginData (from Settings)
     property string timeFormat: pluginData.timeFormat || "12h"
@@ -45,6 +95,17 @@ PluginComponent {
     property int daysToShow: parseInt(pluginData.daysToShow || "7", 10)
     property int startDayOffset: parseInt(pluginData.startDay || "0", 10)
     property bool showInfoNotes: pluginData.showInfoNotes !== undefined ? (pluginData.showInfoNotes === true || pluginData.showInfoNotes === "true") : true
+    property bool useCustomStatusFilter: pluginData.useCustomStatusFilter !== undefined ? (pluginData.useCustomStatusFilter === true || pluginData.useCustomStatusFilter === "true") : false
+    property var customStatusList: {
+        if (!pluginData.customStatusList) {
+            return ["watching", "rewatching", "planning", "considering"];
+        }
+        try {
+            return JSON.parse(pluginData.customStatusList);
+        } catch (e) {
+            return ["watching", "rewatching", "planning", "considering"];
+        }
+    }
 
     // Calculate theme mode dynamically
     readonly property bool isDarkTheme: (Theme.surface.r * 0.299 + Theme.surface.g * 0.587 + Theme.surface.b * 0.114) < 0.5
@@ -81,7 +142,23 @@ PluginComponent {
         root.dankbarPill = pluginData.dankbarPill || "total_count";
         root.dankbarLimit = pluginData.dankbarLimit !== undefined ? parseInt(pluginData.dankbarLimit) : 1;
         let newShowNotes = pluginData.showInfoNotes !== undefined ? (pluginData.showInfoNotes === true || pluginData.showInfoNotes === "true") : true;
-        if (newShowNotes !== root.showInfoNotes) {
+        let newUseCustomFilter = pluginData.useCustomStatusFilter !== undefined ? (pluginData.useCustomStatusFilter === true || pluginData.useCustomStatusFilter === "true") : false;
+        let newCustomStatusList = ["watching", "rewatching", "planning", "considering"];
+        if (pluginData.customStatusList) {
+            try {
+                newCustomStatusList = JSON.parse(pluginData.customStatusList);
+            } catch (e) {}
+        }
+        let filterChanged = (newUseCustomFilter !== root.useCustomStatusFilter) || (JSON.stringify(newCustomStatusList) !== JSON.stringify(root.customStatusList));
+        let customFilterModeChanged = (newUseCustomFilter !== root.useCustomStatusFilter);
+        root.useCustomStatusFilter = newUseCustomFilter;
+        root.customStatusList = newCustomStatusList;
+
+        if (customFilterModeChanged) {
+            // When custom filter toggle changes, we must refetch with/without all statuses
+            root.isLoading = true;
+            root.triggerFetch("Filter mode changed, refetching schedule...");
+        } else if (newShowNotes !== root.showInfoNotes || filterChanged) {
             root.showInfoNotes = newShowNotes;
             root.updateScheduleData();
         }
@@ -145,6 +222,12 @@ PluginComponent {
         const limitedData = root.fullScheduleData.slice(0, root.daysToShow).map(day => {
             const filteredShows = (day.shows || []).filter(show => {
                 if (show.isInfoNote && !root.showInfoNotes) return false;
+                if (!show.isInfoNote && root.useCustomStatusFilter) {
+                    let st = String(show.libraryStatus || "none").toLowerCase().replace('-', '_');
+                    if (!root.customStatusList || !root.customStatusList.includes(st)) {
+                        return false;
+                    }
+                }
                 return true;
             });
             return Object.assign({}, day, { shows: filteredShows });
@@ -168,6 +251,7 @@ PluginComponent {
     function triggerFetch(message) {
         if (!fetchProcess) return;
         
+        root.activeStatusMenuAnimeId = "";
         console.log("LiveChart: Triggering fetch for date:", root.targetDate, "| Reason:", message);
         
         if (message) {
@@ -189,7 +273,8 @@ PluginComponent {
             "--",
             Qt.resolvedUrl("fetch_livechart.py").toString().replace("file://", ""),
             root.targetDate,
-            root.browserName
+            root.browserName,
+            root.useCustomStatusFilter ? "true" : "false"
         ];
         fetchProcess.running = true;
     }
@@ -236,6 +321,7 @@ PluginComponent {
 
     // Standard DMS widget capability popout styling
     popoutWidth: Math.min(Screen.width ? Screen.width - 64 : 1200, Math.max(400, 300 * root.daysToShow)) // Dynamically resize width per day but prevent clipping
+    popoutHeight: 68 + (root.daysToShow <= 2 ? 56 + Theme.spacingM : 0) + 540 + Theme.spacingM + 32
 
     Timer {
         id: updateTimer
@@ -366,23 +452,33 @@ PluginComponent {
         let name = (modelData.siteName || "").toLowerCase();
         let link = (modelData.watchLink || "").toLowerCase();
 
-        // 1. Check local assets/services/*.png
+        // 1. Official vector brand SVG assets with authentic colors (check brand first!)
         if (domain.includes("crunchyroll") || name.includes("crunchyroll") || link.includes("crunchyroll"))
-            return "assets/services/crunchyroll.png";
+            return "assets/services/crunchyroll.svg";
         if (domain.includes("netflix") || name.includes("netflix") || link.includes("netflix"))
-            return "assets/services/netflix.png";
-        if (domain.includes("hidive") || name.includes("hidive") || link.includes("hidive"))
-            return "assets/services/hidive.png";
-        if (domain.includes("disney") || name.includes("disney") || link.includes("disney"))
-            return "assets/services/disneyplus.png";
-        if (domain.includes("hulu") || name.includes("hulu") || link.includes("hulu"))
-            return "assets/services/hulu.png";
-        if (domain.includes("amazon") || domain.includes("primevideo") || name.includes("prime") || link.includes("amazon") || link.includes("primevideo"))
-            return "assets/services/primevideo.png";
+            return "assets/services/netflix.svg";
         if (domain.includes("youtube") || name.includes("youtube") || link.includes("youtube") || domain.includes("youtu.be"))
-            return "assets/services/youtube.png";
+            return "assets/services/youtube.svg";
+        if (domain.includes("amazon") || domain.includes("primevideo") || name.includes("prime") || link.includes("amazon") || link.includes("primevideo"))
+            return "assets/services/primevideo.svg";
+        if (domain.includes("iqiyi") || name.includes("iqiyi") || domain.includes("iq.com") || link.includes("iq.com"))
+            return "assets/services/iqiyi.svg";
+        if (domain.includes("wetv") || name.includes("wetv") || link.includes("wetv.vip"))
+            return "assets/services/wetv.svg";
+        if (domain.includes("bilibili") || name.includes("bilibili") || link.includes("bilibili"))
+            return "assets/services/bilibili.svg";
+        if (domain.includes("disney") || name.includes("disney") || link.includes("disneyplus"))
+            return "assets/services/disneyplus.svg";
+        if (domain.includes("hidive") || name.includes("hidive") || link.includes("hidive"))
+            return "assets/services/hidive.svg";
+        if (domain.includes("hulu") || name.includes("hulu") || link.includes("hulu"))
+            return "assets/services/hulu.svg";
+        if (domain.includes("max.com") || name.includes("max") || link.includes("max.com"))
+            return "assets/services/max.svg";
+        if (domain.includes("shahid") || name.includes("shahid") || link.includes("shahid.mbc.net"))
+            return "assets/services/shahid.svg";
 
-        // 2. Direct scraped icon if provided (e.g. LiveChart mask or custom host)
+        // 2. Direct scraped icon if provided (cached local SVG from LiveChart mask or custom host)
         if (modelData.sourceIcon && modelData.sourceIcon !== "")
             return modelData.sourceIcon;
 
@@ -391,6 +487,40 @@ PluginComponent {
             return "https://www.google.com/s2/favicons?domain=" + modelData.siteDomain + "&sz=64";
 
         return "";
+    }
+
+    function applyOptimisticProgress(animeId, episodesWatched, status) {
+        if (!animeId || !root.fullScheduleData || root.fullScheduleData.length === 0) return;
+        var aid = String(animeId);
+        var targetEp = episodesWatched !== undefined && episodesWatched !== null ? parseInt(episodesWatched, 10) : 0;
+        var targetStatus = status ? status.toLowerCase() : "";
+
+        var updatedFull = root.fullScheduleData.map(function(day) {
+            var shows = (day.shows || []).map(function(show) {
+                if (String(show.animeId || "") === aid) {
+                    var newShow = Object.assign({}, show);
+                    if (targetEp > 0) {
+                        newShow.currentProgress = targetEp;
+                        var cardEp = newShow.cardEpisode || 0;
+                        if (cardEp > 0) {
+                            newShow.isWatched = (targetEp >= cardEp);
+                        }
+                    }
+                    if (targetStatus) {
+                        newShow.libraryStatus = targetStatus;
+                        if (targetStatus === "completed") {
+                            newShow.isWatched = true;
+                        }
+                    }
+                    return newShow;
+                }
+                return show;
+            });
+            return Object.assign({}, day, { shows: shows });
+        });
+
+        root.fullScheduleData = updatedFull;
+        root.updateScheduleData();
     }
 
     NumberAnimation {
@@ -432,7 +562,8 @@ PluginComponent {
             "--",
             Qt.resolvedUrl("fetch_livechart.py").toString().replace("file://", ""),
             root.targetDate,
-            root.browserName
+            root.browserName,
+            root.useCustomStatusFilter ? "true" : "false"
         ]
         running: false
 
@@ -492,8 +623,105 @@ PluginComponent {
 
     property var backupRecords: ({})
     property var conflictItems: []
+    property string conflictFilter: "all" // "all", "progress", "status"
+    function getFilteredConflicts(filterKey) {
+        let items = root.conflictItems || [];
+        if (!items || items.length === 0) return [];
+        let key = filterKey !== undefined ? filterKey : root.conflictFilter;
+        if (key === "all") return items;
+        if (key === "progress") {
+            return items.filter(item => item.hasEpDiff === true || item.conflictType === "progress" || item.conflictType === "both");
+        }
+        if (key === "status") {
+            return items.filter(item => item.hasStatusDiff === true || item.conflictType === "status" || item.conflictType === "both");
+        }
+        return items;
+    }
+
+    readonly property var filteredConflictItems: getFilteredConflicts(root.conflictFilter)
     property bool showConflictModal: false
+    property bool reopenPopoutOnModalClose: false
     property string activeStatusMenuAnimeId: ""
+
+    ListModel {
+        id: stableConflictModel
+    }
+
+    function syncConflictData() {
+        let rawList = root.getFilteredConflicts(root.conflictFilter);
+        let newIds = rawList.map(item => String(item.animeId));
+        let currIds = [];
+        for (let i = 0; i < stableConflictModel.count; i++) {
+            currIds.push(String(stableConflictModel.get(i).animeId));
+        }
+
+        // If order or IDs completely mismatch, clear and append to guarantee no items are dropped
+        let orderMatches = (newIds.length === currIds.length) && newIds.every((id, idx) => id === currIds[idx]);
+        if (orderMatches) {
+            for (let i = 0; i < rawList.length; i++) {
+                let item = rawList[i];
+                stableConflictModel.setProperty(i, "title", item.title || "");
+                stableConflictModel.setProperty(i, "reason", item.reason || "");
+                stableConflictModel.setProperty(i, "conflictType", item.conflictType || "progress");
+                stableConflictModel.setProperty(i, "hasEpDiff", item.hasEpDiff === true || item.conflictType === "progress" || item.conflictType === "both");
+                stableConflictModel.setProperty(i, "hasStatusDiff", item.hasStatusDiff === true || item.conflictType === "status" || item.conflictType === "both");
+                stableConflictModel.setProperty(i, "image", item.image || "");
+                stableConflictModel.setProperty(i, "expectedEp", item.expectedEp !== undefined ? item.expectedEp : 0);
+                stableConflictModel.setProperty(i, "expectedStatus", item.expectedStatus || "");
+            }
+        } else {
+            stableConflictModel.clear();
+            for (let i = 0; i < rawList.length; i++) {
+                let item = rawList[i];
+                stableConflictModel.append({
+                    animeId: item.animeId,
+                    title: item.title || "",
+                    reason: item.reason || "",
+                    conflictType: item.conflictType || "progress",
+                    hasEpDiff: item.hasEpDiff === true || item.conflictType === "progress" || item.conflictType === "both",
+                    hasStatusDiff: item.hasStatusDiff === true || item.conflictType === "status" || item.conflictType === "both",
+                    image: item.image || "",
+                    expectedEp: item.expectedEp !== undefined ? item.expectedEp : 0,
+                    expectedStatus: item.expectedStatus || ""
+                });
+            }
+        }
+    }
+
+    onConflictFilterChanged: syncConflictData()
+    onConflictItemsChanged: syncConflictData()
+
+    function openConflictModal() {
+        if (root.conflictItems.length === 0) return;
+        root.syncConflictData();
+        root.reopenPopoutOnModalClose = true;
+        if (typeof root.closePopout === "function") {
+            root.closePopout();
+        }
+        // Open modal after popout starts closing
+        Qt.callLater(() => {
+            root.showConflictModal = true;
+        });
+    }
+
+    function dismissConflictModal() {
+        root.showConflictModal = false;
+        if (root.reopenPopoutOnModalClose) {
+            root.reopenPopoutOnModalClose = false;
+            popoutReopenTimer.restart();
+        }
+    }
+
+    Timer {
+        id: popoutReopenTimer
+        interval: 160
+        repeat: false
+        onTriggered: {
+            if (typeof root.triggerPopout === "function") {
+                root.triggerPopout();
+            }
+        }
+    }
 
     // Load backup records on start
     Component.onCompleted: {
@@ -532,13 +760,14 @@ PluginComponent {
         backupLoadProc.running = true;
     }
 
-    function recordUserChange(animeId, title, episodesWatched, status) {
+    function recordUserChange(animeId, title, episodesWatched, status, image) {
         if (!animeId) return;
         var map = Object.assign({}, root.backupRecords);
         var prev = map[String(animeId)] || {};
         map[String(animeId)] = {
             animeId: String(animeId),
             title: title || prev.title || "Anime #" + animeId,
+            image: image || prev.image || "",
             episodesWatched: episodesWatched !== undefined && episodesWatched !== null ? parseInt(episodesWatched, 10) : prev.episodesWatched,
             status: status ? status.toLowerCase() : prev.status,
             timestamp: Date.now(),
@@ -576,36 +805,60 @@ PluginComponent {
                 var b = backups[aid];
                 if (b.ignored) continue; // User ignored once
 
-                var reason = "";
+                var epReason = "";
+                var hasEpDiff = false;
+                var currentEp = show.currentProgress || 0;
+                var expectedEp = (b.episodesWatched !== undefined && b.episodesWatched !== null) ? b.episodesWatched : null;
+
                 // Check episode regression
-                if (b.episodesWatched !== undefined && b.episodesWatched !== null) {
-                    var currentEp = show.currentProgress || 0;
-                    if (currentEp < b.episodesWatched) {
-                        reason = "Progress dropped to EP" + currentEp + " (expected EP" + b.episodesWatched + ")";
-                    }
+                if (expectedEp !== null && currentEp < expectedEp) {
+                    hasEpDiff = true;
+                    epReason = "Progress dropped to EP " + currentEp + " (recorded: EP " + expectedEp + ")";
                 }
+
                 // Check status mismatch
-                if (!reason && b.status && show.libraryStatus) {
-                    var sCurrent = String(show.libraryStatus).toLowerCase().replace('-', '_');
-                    var sExpected = String(b.status).toLowerCase().replace('-', '_');
+                var statusReason = "";
+                var hasStatusDiff = false;
+                var expectedStatus = b.status || "";
+                var currentStatus = show.libraryStatus || "";
+                if (expectedStatus && currentStatus) {
+                    var sCurrent = String(currentStatus).toLowerCase().replace('-', '_');
+                    var sExpected = String(expectedStatus).toLowerCase().replace('-', '_');
                     if (sCurrent !== sExpected) {
-                        reason = "Status is '" + show.libraryStatus + "' (expected '" + b.status + "')";
+                        hasStatusDiff = true;
+                        statusReason = "Status changed to '" + currentStatus + "' (recorded: '" + expectedStatus + "')";
                     }
                 }
 
-                if (reason) {
+                if (hasEpDiff || hasStatusDiff) {
                     // Check if already in found list
                     var exists = false;
                     for (var k = 0; k < found.length; k++) {
                         if (found[k].animeId === aid) { exists = true; break; }
                     }
                     if (!exists) {
+                        var conflictType = (hasEpDiff && hasStatusDiff) ? "both" : (hasEpDiff ? "progress" : "status");
+                        var fullReason = "";
+                        if (hasEpDiff && hasStatusDiff) {
+                            fullReason = epReason + " • " + statusReason;
+                        } else if (hasEpDiff) {
+                            fullReason = epReason;
+                        } else {
+                            fullReason = statusReason;
+                        }
+
                         found.push({
                             animeId: aid,
                             title: show.title || b.title,
-                            reason: reason,
-                            expectedEp: b.episodesWatched,
-                            expectedStatus: b.status
+                            image: show.image || b.image || "",
+                            reason: fullReason,
+                            conflictType: conflictType,
+                            hasEpDiff: hasEpDiff,
+                            hasStatusDiff: hasStatusDiff,
+                            epReason: epReason,
+                            statusReason: statusReason,
+                            expectedEp: expectedEp !== null ? expectedEp : 0,
+                            expectedStatus: expectedStatus
                         });
                     }
                 }
@@ -630,7 +883,7 @@ PluginComponent {
         }
         root.conflictItems = updated;
         if (root.conflictItems.length === 0) {
-            root.showConflictModal = false;
+            root.dismissConflictModal();
         }
     }
 
@@ -645,7 +898,7 @@ PluginComponent {
         root.backupRecords = map;
         root.saveBackupRecords();
         root.conflictItems = [];
-        root.showConflictModal = false;
+        root.dismissConflictModal();
     }
 
     Process {
@@ -678,7 +931,7 @@ PluginComponent {
         }
     }
 
-    function updateAnimeProgress(animeId, episodesWatched, status, animeTitle, totalEpisodes, currentStatus) {
+    function updateAnimeProgress(animeId, episodesWatched, status, animeTitle, totalEpisodes, currentStatus, coverImage) {
         if (!animeId) {
             console.warn("LiveChart: Cannot update progress without animeId");
             return;
@@ -705,8 +958,11 @@ PluginComponent {
             }
         }
 
-        // Record backup change
-        root.recordUserChange(animeId, animeTitle, targetEp, targetStatus);
+        // Optimistically update UI so numbers / tick update instantly
+        root.applyOptimisticProgress(animeId, targetEp, targetStatus);
+
+        // Record backup change with cover image
+        root.recordUserChange(animeId, animeTitle, targetEp, targetStatus, coverImage);
 
         var cmdArgs = [
             "sh", "-c",
@@ -852,22 +1108,35 @@ PluginComponent {
                 function onShouldBeVisibleChanged() {
                     if (popout.parentPopout && !popout.parentPopout.shouldBeVisible) {
                         root.activeStatusMenuAnimeId = "";
+                        // Only close conflict modal if not transitioning to modal view
+                        if (!root.reopenPopoutOnModalClose) {
+                            root.showConflictModal = false;
+                        }
                     }
                 }
             }
 
             Component.onDestruction: {
                 root.activeStatusMenuAnimeId = "";
+                if (!root.reopenPopoutOnModalClose) {
+                    root.showConflictModal = false;
+                }
             }
-            
-            Column {
-                width: parent.width
-                spacing: Theme.spacingM
 
-                // Header card
-                Item {
+            Item {
+                id: popoutContainerWrapper
+                width: popout.width
+                implicitHeight: mainCol.implicitHeight
+
+                Column {
+                    id: mainCol
                     width: parent.width
-                    height: 68
+                    spacing: Theme.spacingM
+
+                    // Header card
+                    Item {
+                        width: parent.width
+                        height: 68
 
                     StyledRect {
                         anchors.fill: parent
@@ -1081,23 +1350,35 @@ PluginComponent {
                         anchors.right: parent.right
                         anchors.rightMargin: Theme.spacingM
                         anchors.verticalCenter: parent.verticalCenter
-                        spacing: 8
+                        spacing: Theme.spacingXS
 
                         // Conflict Indicator Button (shown only when changes were reverted / outside update detected)
-                        Item {
+                        Rectangle {
                             id: conflictBtnContainer
                             visible: root.conflictItems.length > 0
-                            width: 42
-                            height: 42
-                            scale: conflictArea.pressed ? 0.9 : (conflictArea.containsMouse ? 1.1 : 1.0)
-                            Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutBack } }
+                            width: visible ? 42 : 0
+                            height: 40
 
-                            Rectangle {
-                                anchors.fill: parent
-                                radius: Theme.cornerRadius
-                                color: conflictArea.containsMouse ? Theme.withAlpha(Theme.error, 0.25) : Theme.withAlpha(Theme.error, 0.15)
-                                border.width: 1
-                                border.color: Theme.withAlpha(Theme.error, 0.5)
+                            color: conflictArea.containsMouse ? Theme.withAlpha(Theme.error, 0.25) : Theme.withAlpha(Theme.error, 0.15)
+                            border.width: 1
+                            border.color: conflictArea.containsMouse ? Theme.withAlpha(Theme.error, 0.8) : Theme.withAlpha(Theme.error, 0.5)
+
+                            topLeftRadius: Theme.cornerRadius
+                            bottomLeftRadius: Theme.cornerRadius
+                            topRightRadius: Math.min(4, Theme.cornerRadius)
+                            bottomRightRadius: Math.min(4, Theme.cornerRadius)
+
+                            Behavior on color { ColorAnimation { duration: 150 } }
+                            Behavior on border.color { ColorAnimation { duration: 150 } }
+                            Behavior on topLeftRadius { enabled: true; NumberAnimation { duration: 600; easing.type: Easing.OutExpo } }
+                            Behavior on bottomLeftRadius { enabled: true; NumberAnimation { duration: 600; easing.type: Easing.OutExpo } }
+                            Behavior on topRightRadius { enabled: true; NumberAnimation { duration: 600; easing.type: Easing.OutExpo } }
+                            Behavior on bottomRightRadius { enabled: true; NumberAnimation { duration: 600; easing.type: Easing.OutExpo } }
+
+                            DankRipple {
+                                id: conflictRipple
+                                cornerRadius: Theme.cornerRadius
+                                rippleColor: Theme.error
                             }
 
                             DankIcon {
@@ -1129,16 +1410,44 @@ PluginComponent {
                                 anchors.fill: parent
                                 hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
-                                onClicked: root.showConflictModal = true
+                                onPressed: mouse => conflictRipple.trigger(mouse.x, mouse.y)
+                                onClicked: {
+                                    if (root.showConflictModal) {
+                                        root.dismissConflictModal();
+                                    } else {
+                                        root.openConflictModal();
+                                    }
+                                }
                             }
                         }
 
-                        Item {
+                        Rectangle {
                             id: refreshContainer
                             width: 42
-                            height: 42
-                            scale: refreshArea.pressed ? 0.9 : (refreshArea.containsMouse ? 1.1 : 1.0)
-                            Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutBack } }
+                            height: 40
+                            property bool hasConflict: root.conflictItems.length > 0
+
+                            topLeftRadius: root.isLoading ? (height / 2) : (hasConflict ? Math.min(4, Theme.cornerRadius) : Theme.cornerRadius)
+                            bottomLeftRadius: root.isLoading ? (height / 2) : (hasConflict ? Math.min(4, Theme.cornerRadius) : Theme.cornerRadius)
+                            topRightRadius: root.isLoading ? (height / 2) : Theme.cornerRadius
+                            bottomRightRadius: root.isLoading ? (height / 2) : Theme.cornerRadius
+
+                            color: refreshArea.containsMouse ? Theme.withAlpha(Theme.primary, 0.15) : Theme.withAlpha(Theme.secondary, 0.04)
+                            border.width: 1
+                            border.color: refreshArea.containsMouse ? Theme.withAlpha(Theme.primary, 0.40) : Theme.withAlpha(Theme.secondary, 0.15)
+
+                            Behavior on color { ColorAnimation { duration: 150 } }
+                            Behavior on border.color { ColorAnimation { duration: 150 } }
+                            Behavior on topLeftRadius { enabled: true; NumberAnimation { duration: 600; easing.type: Easing.OutExpo } }
+                            Behavior on bottomLeftRadius { enabled: true; NumberAnimation { duration: 600; easing.type: Easing.OutExpo } }
+                            Behavior on topRightRadius { enabled: true; NumberAnimation { duration: 600; easing.type: Easing.OutExpo } }
+                            Behavior on bottomRightRadius { enabled: true; NumberAnimation { duration: 600; easing.type: Easing.OutExpo } }
+
+                            DankRipple {
+                                id: refreshRipple
+                                cornerRadius: refreshContainer.topLeftRadius
+                                rippleColor: Theme.primary
+                            }
 
                             MouseArea {
                                 id: refreshArea
@@ -1149,23 +1458,12 @@ PluginComponent {
                                 onPressed: mouse => refreshRipple.trigger(mouse.x, mouse.y)
                                 onClicked: {
                                     if (root.isLoading) return;
+                                    root.activeStatusMenuAnimeId = "";
                                     root.isLoading = true;
                                     root.fullScheduleData = [];
                                     root.updateScheduleData();
                                     root.triggerFetch("Fetching schedule...");
                                 }
-                            }
-
-                            Rectangle {
-                                id: refreshBg
-                                anchors.fill: parent
-                                radius: root.isLoading ? (height / 2) : Theme.cornerRadius
-                                color: refreshArea.containsMouse ? Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, 0.15) : Qt.rgba(Theme.surfaceContainer.r, Theme.surfaceContainer.g, Theme.surfaceContainer.b, 0.4)
-                                border.width: 1
-                                border.color: Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, refreshArea.containsMouse ? 0.3 : 0.15)
-                                Behavior on color { ColorAnimation { duration: 150 } }
-                                Behavior on border.color { ColorAnimation { duration: 150 } }
-                                Behavior on radius { NumberAnimation { duration: 600; easing.type: Easing.OutExpo } }
                             }
 
                             DankIcon {
@@ -1192,13 +1490,6 @@ PluginComponent {
                                 color: Theme.primary
                                 visible: root.isLoading
                                 running: root.isLoading
-                            }
-
-                            DankRipple {
-                                id: refreshRipple
-                                rippleColor: Theme.surfaceText
-                                cornerRadius: refreshBg.radius
-                                anchors.fill: parent
                             }
                         }
                     }
@@ -1315,6 +1606,7 @@ PluginComponent {
                     width: parent.width
                     height: 540
                     spacing: 12
+                    clip: true
                     
                     Repeater {
                         model: root.daysToShow
@@ -1659,13 +1951,13 @@ PluginComponent {
                 // Schedule List Weekly Horizontal Grid
                 DankListView {
                     id: mainListView
-                    visible: root.scheduleData.length > 0
+                    visible: !root.isLoading && root.scheduleData.length > 0
                     width: parent.width
                     height: 540 // Increased to accommodate headers
                     orientation: ListView.Horizontal
                     model: root.scheduleData
                     spacing: 12 // Reduced gap
-                    clip: root.activeStatusMenuAnimeId === ""
+                    clip: true
                     fadeEdges: false
 
                     property real targetContentX: contentX
@@ -1822,7 +2114,7 @@ PluginComponent {
                                 height: parent.height - 40 - 16
                                 model: modelData.shows
                                  spacing: 0 // Using internal delegate lines
-                                 clip: root.activeStatusMenuAnimeId === ""
+                                 clip: true
                                  fadeEdges: false
                                  topMargin: 4
                                  bottomMargin: 4
@@ -2174,16 +2466,18 @@ PluginComponent {
                                                 }
 
                                             ColumnLayout {
-                                            anchors.fill: parent
-                                            anchors.margins: 12
-                                            spacing: 8
+                                                id: cardMainCol
+                                                anchors.fill: parent
+                                                anchors.margins: 12
+                                                spacing: 8
+                                                z: (String(modelData.animeId || "") === root.activeStatusMenuAnimeId) ? 500 : 1
 
-                                            // Top Bar: Time, Countdown, and Bookmark
-                                            RowLayout {
-                                                id: cardTopBar
-                                                Layout.fillWidth: true
-                                                spacing: 4
-                                                z: (String(modelData.animeId || "") === root.activeStatusMenuAnimeId) ? 100 : 1
+                                                // Top Bar: Time, Countdown, and Bookmark
+                                                RowLayout {
+                                                    id: cardTopBar
+                                                    Layout.fillWidth: true
+                                                    spacing: 4
+                                                    z: (String(modelData.animeId || "") === root.activeStatusMenuAnimeId) ? 500 : 1
 
                                                 // Time Chip
                                                 Rectangle {
@@ -2237,8 +2531,7 @@ PluginComponent {
                                                       id: statusContainer
                                                       spacing: 4
                                                       Layout.rightMargin: (dayColumn.timelineX - 12) - (timeText.implicitWidth / 2)
-
-
+                                                      z: (String(modelData.animeId || "") === root.activeStatusMenuAnimeId) ? 500 : 1
 
                                                       // Bookmark Button
                                                       Item {
@@ -2478,7 +2771,7 @@ PluginComponent {
                                                                                       var aid = innerDelegate.showItem.animeId || "";
                                                                                       var aTitle = innerDelegate.showItem.title || "";
                                                                                       if (aid) {
-                                                                                          root.updateAnimeProgress(aid, curEp, targetStatus, aTitle, innerDelegate.showItem.totalEpisodes, innerDelegate.showItem.libraryStatus);
+                                                                                          root.updateAnimeProgress(aid, curEp, targetStatus, aTitle, innerDelegate.showItem.totalEpisodes, innerDelegate.showItem.libraryStatus, innerDelegate.showItem.image || "");
                                                                                       }
                                                                                   }
                                                                               }
@@ -2579,7 +2872,7 @@ PluginComponent {
                                                             }
                                                         }
 
-                                                        // Watch Button
+                                                        // Watch Button (3D tactile elevated button with authentic colorful brand icon)
                                                         Rectangle {
                                                             id: watchBtn
                                                             anchors.horizontalCenter: parent.horizontalCenter
@@ -2588,11 +2881,21 @@ PluginComponent {
                                                             width: 28
                                                             height: 28
                                                             radius: 14
-                                                            color: "white"
-                                                            border.width: 3
-                                                            border.color: Qt.rgba(Theme.surfaceContainer.r, Theme.surfaceContainer.g, Theme.surfaceContainer.b, 1)
+                                                            color: root.isDarkTheme ? "#222225" : "#FFFFFF"
+                                                            border.width: 1.5
+                                                            border.color: root.isDarkTheme ? Qt.rgba(1, 1, 1, 0.15) : Qt.rgba(0, 0, 0, 0.12)
                                                             visible: modelData.watchLink !== ""
                                                             z: 10 // Ensure it's above cover click handler
+
+                                                            // 3D tactile elevation: soft drop shadow
+                                                            layer.enabled: true
+                                                            layer.effect: MultiEffect {
+                                                                shadowEnabled: true
+                                                                shadowColor: Qt.rgba(0, 0, 0, 0.4)
+                                                                shadowBlur: 0.35
+                                                                shadowHorizontalOffset: 0
+                                                                shadowVerticalOffset: 1.5
+                                                            }
 
                                                             DankRipple {
                                                                 id: watchRipple
@@ -2600,46 +2903,28 @@ PluginComponent {
                                                                 rippleColor: Theme.primary
                                                             }
 
-                                                            Rectangle {
-                                                                id: watchIconMask
-                                                                anchors.fill: parent
-                                                                anchors.margins: 4
-                                                                radius: width / 2
-                                                                color: "white"
-                                                                visible: false
-                                                                layer.enabled: true
-                                                            }
-
                                                             Item {
                                                                 id: watchIconSrc
-                                                                anchors.fill: parent
-                                                                anchors.margins: 4
-                                                                visible: false
-                                                                layer.enabled: true
+                                                                anchors.centerIn: parent
+                                                                width: 18
+                                                                height: 18
 
                                                                 Image {
                                                                     id: watchIcon
                                                                     anchors.fill: parent
                                                                     source: root.getServiceIcon(modelData)
                                                                     visible: source.toString() !== ""
+                                                                    fillMode: Image.PreserveAspectFit
                                                                     smooth: true
                                                                     mipmap: true
                                                                 }
                                                             }
 
-                                                            MultiEffect {
-                                                                anchors.fill: watchIconSrc
-                                                                source: watchIconSrc
-                                                                maskEnabled: true
-                                                                maskSource: watchIconMask
-                                                                visible: watchIcon.source.toString() !== ""
-                                                            }
-
                                                             DankIcon {
                                                                 anchors.centerIn: parent
                                                                 name: modelData.isInfoNote ? "info" : "link"
-                                                                size: 16
-                                                                color: modelData.isInfoNote ? (Theme.warning || "#FFC107") : Theme.withAlpha(Theme.buttonBg, 0.7)
+                                                                size: 14
+                                                                color: modelData.isInfoNote ? (Theme.warning || "#FFC107") : Theme.primary
                                                                 visible: watchIcon.source.toString() === ""
                                                             }
 
@@ -2709,8 +2994,12 @@ PluginComponent {
                                             id: markWatchedBtn
                                             readonly property int cardEp: modelData.cardEpisode || 0
                                             readonly property int currEp: modelData.currentProgress || 0
-                                            readonly property int epDifference: Math.max(0, cardEp - currEp)
-                                            readonly property bool hasMultipleUnwatched: !modelData.isWatched && !modelData.isInfoNote && epDifference > 1
+                                            readonly property int airTimestamp: parseInt(modelData.timestamp || "0", 10)
+                                            readonly property bool isAired: airTimestamp === 0 || airTimestamp <= root.currentTime
+                                            readonly property int targetProgressEp: isAired ? cardEp : Math.max(currEp, cardEp - 1)
+                                            readonly property int epDifference: Math.max(0, targetProgressEp - currEp)
+                                            readonly property bool hasPendingEpisodes: !modelData.isWatched && !modelData.isInfoNote && (targetProgressEp > currEp)
+                                            readonly property bool hasMultipleUnwatched: hasPendingEpisodes && (epDifference > 1)
 
                                             property bool isExpanded: countMA.containsMouse || tickMA.containsMouse || mainProgressHover.containsMouse
 
@@ -2718,8 +3007,8 @@ PluginComponent {
                                             // When not hovered, compact into a single button (width 28) with number tucked above
                                             width: hasMultipleUnwatched ? (isExpanded ? 62 : 28) : 28
                                             height: 28
-                                            visible: !modelData.isWatched && !modelData.isInfoNote
-                                            z: 30
+                                            visible: hasPendingEpisodes
+                                            z: (String(modelData.animeId || "") === root.activeStatusMenuAnimeId) ? 1 : 30
 
                                             anchors.right: parent.right
                                             anchors.bottom: parent.bottom
@@ -2794,7 +3083,7 @@ PluginComponent {
                                                     onClicked: {
                                                         var nextEp = markWatchedBtn.currEp + 1;
                                                         if (modelData.animeId) {
-                                                            root.updateAnimeProgress(modelData.animeId, nextEp, "WATCHING", modelData.title, modelData.totalEpisodes, modelData.libraryStatus);
+                                                            root.updateAnimeProgress(modelData.animeId, nextEp, "WATCHING", modelData.title, modelData.totalEpisodes, modelData.libraryStatus, modelData.image || "");
                                                         }
                                                     }
                                                 }
@@ -2855,9 +3144,9 @@ PluginComponent {
                                                     }
                                                     onClicked: {
                                                         markWatchedBtn.visible = false;
-                                                        var targetEp = markWatchedBtn.cardEp > 0 ? markWatchedBtn.cardEp : (modelData.progressTarget || ((modelData.currentProgress || 0) + 1));
+                                                        var targetEp = markWatchedBtn.targetProgressEp > 0 ? markWatchedBtn.targetProgressEp : (modelData.progressTarget || ((modelData.currentProgress || 0) + 1));
                                                         if (modelData.animeId) {
-                                                            root.updateAnimeProgress(modelData.animeId, targetEp, "WATCHING", modelData.title, modelData.totalEpisodes, modelData.libraryStatus);
+                                                            root.updateAnimeProgress(modelData.animeId, targetEp, "WATCHING", modelData.title, modelData.totalEpisodes, modelData.libraryStatus, modelData.image || "");
                                                         } else if (modelData.animeLink) {
                                                             root.openUrl(modelData.animeLink);
                                                         }
@@ -2875,88 +3164,123 @@ PluginComponent {
             } // DankListView (Weekly)
         } // Column (Popout Main Column)
 
+        } // Item (popoutContainerWrapper)
+    } // PopoutComponent
+} // Component (popoutContent)
 
+    // =========================================================================
+    // CONFLICT / ERROR POPUP LAYER (Separate PanelWindow Layer Shell with Blur)
+    // Inherits native compositor blur (WlrLayershell & BackgroundEffect.blurRegion)
+    // identical to DMS-ScreenCapture_Toolbar, with spacious layout, 1.5x covers (60x82.5),
+    // distinct error category indicators, and styled action button matching error indicator.
+    // =========================================================================
 
+    // Consolidated Interactive Dialog Window with focused blur region and backdrop scrim
+    PanelWindow {
+        id: conflictModalWindow
+        visible: root.showConflictModal && root.conflictItems.length > 0
+        color: "transparent"
 
-        // Conflict Popup Dialog (shows when progress/status was reverted or changed outside plugin)
+        WlrLayershell.namespace: "dms:plugins:liveChartSchedule:modal"
+        WlrLayershell.layer: WlrLayershell.Overlay
+        WlrLayershell.exclusiveZone: -1
+        WlrLayershell.keyboardFocus: visible ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+
+        onVisibleChanged: {
+            if (visible) {
+                conflictKeyHandler.forceActiveFocus();
+            }
+        }
+
+        anchors {
+            top: true
+            left: true
+            right: true
+            bottom: true
+        }
+
+        BackgroundEffect.blurRegion: visible ? conflictBlurRegion : null
+
+        Region {
+            id: conflictBlurRegion
+            x: conflictDialogCard.x
+            y: conflictDialogCard.y
+            width: conflictDialogCard.width
+            height: conflictDialogCard.height
+            radius: conflictDialogCard.radius
+        }
+
+        // 1. Full-screen backdrop dim scrim directly in the same window (underneath dialog card)
         Rectangle {
-            id: conflictModal
-            visible: root.showConflictModal && root.conflictItems.length > 0
+            id: conflictDimScrim
             anchors.fill: parent
-            color: Theme.withAlpha("#000000", 0.6)
-            z: 999
-
-            // Material 3 Expressive Background Shapes (rotating in place across different positions)
-            Item {
-                anchors.fill: parent
-                z: -1
-                opacity: 0.25
-
-                DMaterialShape {
-                    shape: "cookie4"
-                    color: Theme.error
-                    implicitWidth: 160
-                    implicitHeight: 160
-                    x: 40
-                    y: 30
-
-                    RotationAnimation on rotation {
-                        from: 0
-                        to: 360
-                        duration: 24000
-                        loops: Animation.Infinite
-                        running: conflictModal.visible
-                    }
-                }
-
-                DMaterialShape {
-                    shape: "sunny"
-                    color: Theme.warning || "#FF9800"
-                    implicitWidth: 140
-                    implicitHeight: 140
-                    x: parent.width - 180
-                    y: 40
-
-                    RotationAnimation on rotation {
-                        from: 360
-                        to: 0
-                        duration: 28000
-                        loops: Animation.Infinite
-                        running: conflictModal.visible
-                    }
-                }
+            z: -1
+            color: "black"
+            opacity: conflictModalWindow.visible ? 0.35 : 0
+            Behavior on opacity {
+                NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
             }
 
             MouseArea {
                 anchors.fill: parent
-                // absorb clicks outside
+                onClicked: {
+                    root.dismissConflictModal();
+                }
+            }
+        }
+
+        Item {
+            id: conflictKeyHandler
+            anchors.fill: parent
+            focus: conflictModalWindow.visible
+
+            Keys.onEscapePressed: {
+                root.dismissConflictModal();
             }
 
+            // Centered Modal Dialog Card
             Rectangle {
+                id: conflictDialogCard
                 anchors.centerIn: parent
-                width: Math.min(560, parent.width * 0.9)
-                height: Math.min(480, conflictCol.implicitHeight + 48)
+                width: Math.min(620, parent.width - 32)
+                implicitHeight: conflictCol.implicitHeight + 48
                 radius: 24
-                color: Theme.withAlpha(Theme.surfaceContainer || "#1E1E1E", 0.95)
+                color: Theme.withAlpha(Theme.surfaceContainerHigh || Theme.surfaceContainer || "#1E1E1E", Theme.popupTransparency || 0.88)
                 border.width: 1
-                border.color: Theme.withAlpha(Theme.error, 0.4)
+                border.color: Theme.withAlpha(Theme.error, 0.40)
+
+                layer.enabled: true
+                layer.effect: MultiEffect {
+                    shadowEnabled: true
+                    shadowColor: Qt.rgba(0, 0, 0, 0.55)
+                    shadowBlur: 0.6
+                    shadowVerticalOffset: 6
+                }
+
+                // Consume background clicks on the card so they don't fall through to the dim scrim
+                MouseArea {
+                    anchors.fill: parent
+                    acceptedButtons: Qt.AllButtons
+                    onPressed: mouse => mouse.accepted = true
+                }
 
                 ColumnLayout {
                     id: conflictCol
                     anchors.fill: parent
-                    anchors.margins: 24
-                    spacing: 16
+                    anchors.margins: 26
+                    spacing: 20
 
+                    // Header Warning Icon
                     DankIcon {
                         name: "warning"
-                        size: 48
+                        size: 46
                         color: Theme.error
                         Layout.alignment: Qt.AlignHCenter
                     }
 
                     StyledText {
                         text: "Sync Discrepancy Detected"
-                        font.pixelSize: Theme.fontSizeLarge
+                        font.pixelSize: Theme.fontSizeLarge + 1
                         font.bold: true
                         color: Theme.surfaceText
                         Layout.alignment: Qt.AlignHCenter
@@ -2971,89 +3295,488 @@ PluginComponent {
                         Layout.fillWidth: true
                     }
 
-                    // Conflict Items List
-                    DankListView {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: Math.min(180, root.conflictItems.length * 56)
-                        clip: true
-                        model: root.conflictItems
-                        spacing: 8
+                    // Filter Chips (Segmented First, Mid, Last Button Row with Morphing Radii matching DMS-AMD_GPU_Monitor_Revive)
+                    Row {
+                        id: conflictFilterRow
+                        Layout.alignment: Qt.AlignHCenter
+                        spacing: Theme.groupedListGap || 2
 
-                        delegate: Rectangle {
-                            width: ListView.view.width
-                            height: 48
-                            radius: 10
-                            color: Theme.withAlpha(Theme.surfaceContainerHigh || "#2A2A2A", 0.7)
-                            border.width: 1
-                            border.color: Theme.withAlpha(Theme.surfaceVariantText, 0.15)
+                        readonly property var filterDefs: [
+                            { key: "all", label: "All", icon: "select_all", count: root.conflictItems.length },
+                            { key: "progress", label: "Episode Desync", icon: "sync_problem", count: root.conflictItems.filter(i => i.hasEpDiff === true || i.conflictType === "progress" || i.conflictType === "both").length },
+                            { key: "status", label: "Status Changed", icon: "bookmark_border", count: root.conflictItems.filter(i => i.hasStatusDiff === true || i.conflictType === "status" || i.conflictType === "both").length }
+                        ]
 
-                            RowLayout {
-                                anchors.fill: parent
-                                anchors.margins: 10
-                                spacing: 8
+                        Repeater {
+                            model: conflictFilterRow.filterDefs
 
-                                ColumnLayout {
-                                    Layout.fillWidth: true
-                                    spacing: 2
-                                    StyledText {
-                                        text: modelData.title
-                                        font.bold: true
-                                        font.pixelSize: Theme.fontSizeSmall
-                                        color: Theme.surfaceText
-                                        elide: Text.ElideRight
-                                        Layout.fillWidth: true
+                            Item {
+                                id: filterChipItem
+                                width: filterChipRow.implicitWidth + 24
+                                height: Theme.buttonHeightS || 36
+
+                                readonly property bool isSelected: root.conflictFilter === modelData.key
+                                readonly property bool hovered: filterChipMA.containsMouse
+                                readonly property bool isFirst: index === 0
+                                readonly property bool isLast: index === (conflictFilterRow.filterDefs.length - 1)
+
+                                readonly property real outerRad: Theme.groupedListOuterRadius || Theme.cornerRadiusL || 12
+                                readonly property real innerRad: Theme.groupedListInnerRadius || Theme.cornerRadiusXS || 4
+                                readonly property real activeRad: Theme.cornerRadiusFull || (height / 2)
+
+                                Rectangle {
+                                    id: filterChipBg
+                                    anchors.fill: parent
+                                    radius: filterChipItem.innerRad
+                                    topLeftRadius: filterChipItem.isSelected ? filterChipItem.activeRad : (filterChipItem.isFirst ? filterChipItem.outerRad : filterChipItem.innerRad)
+                                    bottomLeftRadius: filterChipItem.isSelected ? filterChipItem.activeRad : (filterChipItem.isFirst ? filterChipItem.outerRad : filterChipItem.innerRad)
+                                    topRightRadius: filterChipItem.isSelected ? filterChipItem.activeRad : (filterChipItem.isLast ? filterChipItem.outerRad : filterChipItem.innerRad)
+                                    bottomRightRadius: filterChipItem.isSelected ? filterChipItem.activeRad : (filterChipItem.isLast ? filterChipItem.outerRad : filterChipItem.innerRad)
+
+                                    Behavior on topLeftRadius { NumberAnimation { duration: 150 } }
+                                    Behavior on bottomLeftRadius { NumberAnimation { duration: 150 } }
+                                    Behavior on topRightRadius { NumberAnimation { duration: 150 } }
+                                    Behavior on bottomRightRadius { NumberAnimation { duration: 150 } }
+
+                                    color: filterChipItem.isSelected
+                                        ? (Theme.secondaryContainer || Theme.buttonBg || Theme.withAlpha(Theme.primary, 0.22))
+                                        : (filterChipItem.hovered
+                                            ? Theme.withAlpha(Theme.surfaceVariant, 0.15)
+                                            : (Theme.foregroundColor ? Theme.foregroundColor(Theme.chipSurface) : Theme.withAlpha(Theme.surfaceVariant, 0.20)))
+
+                                    border.width: 1
+                                    border.color: filterChipItem.isSelected
+                                        ? Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, 0.50)
+                                        : Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, 0.15)
+
+                                    Behavior on color { ColorAnimation { duration: 150 } }
+                                    Behavior on border.color { ColorAnimation { duration: 150 } }
+
+                                    DankRipple {
+                                        id: filterChipRip
+                                        anchors.fill: parent
+                                        cornerRadius: filterChipBg.topLeftRadius
+                                        rippleColor: Theme.primary
                                     }
-                                    StyledText {
-                                        text: modelData.reason
-                                        font.pixelSize: 11
-                                        color: Theme.error
-                                        elide: Text.ElideRight
-                                        Layout.fillWidth: true
+
+                                    Row {
+                                        id: filterChipRow
+                                        anchors.centerIn: parent
+                                        spacing: Theme.spacingXS || 6
+
+                                        DankIcon {
+                                            name: modelData.icon
+                                            size: Theme.iconSizeSmall || 16
+                                            color: filterChipItem.isSelected
+                                                ? (Theme.onSecondaryContainer || Theme.buttonText || Theme.primary)
+                                                : (filterChipItem.hovered ? Theme.surfaceText : (Theme.onSurfaceVariant || Theme.surfaceVariantText))
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            Behavior on color { ColorAnimation { duration: Theme.shortDuration || 150 } }
+                                        }
+
+                                        StyledText {
+                                            text: modelData.label + (modelData.count > 0 ? " (" + modelData.count + ")" : "")
+                                            font.pixelSize: Theme.fontSizeSmall
+                                            font.weight: filterChipItem.isSelected ? Font.Bold : Font.Medium
+                                            color: filterChipItem.isSelected
+                                                ? (Theme.onSecondaryContainer || Theme.buttonText || Theme.primary)
+                                                : (filterChipItem.hovered ? Theme.surfaceText : (Theme.onSurfaceVariant || Theme.surfaceVariantText))
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            Behavior on color { ColorAnimation { duration: Theme.shortDuration || 150 } }
+                                        }
                                     }
                                 }
 
-                                DButton {
-                                    text: "Ignore Once"
-                                    buttonHeight: 30
-                                    backgroundColor: Theme.withAlpha(Theme.surfaceVariantText, 0.2)
-                                    textColor: Theme.surfaceText
+                                MouseArea {
+                                    id: filterChipMA
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onPressed: mouse => filterChipRip.trigger(mouse.x, mouse.y)
                                     onClicked: {
-                                        root.ignoreConflict(modelData.animeId);
+                                        root.conflictFilter = modelData.key;
                                     }
                                 }
                             }
                         }
                     }
 
-                    // Action Buttons (Ignore All & Close)
-                    RowLayout {
-                        Layout.alignment: Qt.AlignHCenter
-                        spacing: 12
+                    // Parent Container enclosing the Conflict Items List (matching DMS-AMD_GPU_Monitor_Revive Process Section)
+                    Rectangle {
+                        id: conflictListContainer
+                        Layout.fillWidth: true
+                        Layout.topMargin: 2
+                        Layout.bottomMargin: 6
+                        
+                        // Dimensions
+                        readonly property real itemHeight: 94
+                        readonly property real itemGap: Theme.groupedListGap || 2
+                        readonly property real listMargins: (Theme.spacingS || 8) * 2
 
-                        DButton {
-                            text: "Ignore All Once"
-                            iconName: "check"
-                            buttonHeight: 38
-                            backgroundColor: Theme.error
-                            textColor: "white"
-                            onClicked: {
-                                root.ignoreAllConflicts();
+                        // Base height is anchored to total conflict count (all entries), up to 5 items max before scrolling
+                        readonly property int baseItemCount: Math.min(5, Math.max(1, root.conflictItems.length))
+                        readonly property real targetListHeight: (baseItemCount * itemHeight) + (Math.max(0, baseItemCount - 1) * itemGap) + listMargins
+
+                        // Maximum allowed container height based on available screen space (capping modal safely on smaller displays)
+                        readonly property real maxScreenListHeight: Math.max(220, (conflictModalWindow.height || 800) * 0.62)
+
+                        // Constant height across filter tabs; only scrolls when entries exceed 5 items or screen budget
+                        implicitHeight: Math.min(maxScreenListHeight, targetListHeight)
+
+                        radius: Theme.cornerRadiusL || 16
+                        clip: true
+                        color: Theme.withAlpha(Theme.surfaceContainerHighest, Theme.popupTransparency || 0.75)
+                        border.width: Theme.layerOutlineWidth || 1
+                        border.color: Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, 0.18)
+
+                        Behavior on implicitHeight {
+                            NumberAnimation { duration: Theme.shortDuration || 150; easing.type: Theme.standardEasing || Easing.OutCubic }
+                        }
+
+                        // Empty State if current filter has no items
+                        StyledText {
+                            anchors.centerIn: parent
+                            visible: stableConflictModel.count === 0
+                            text: "No discrepancies matching this filter"
+                            font.pixelSize: Theme.fontSizeSmall
+                            color: Theme.surfaceVariantText
+                        }
+
+                        // Gliding Conflict Items List View with DMS shortDuration animations
+                        DankListView {
+                            id: conflictListView
+                            anchors.fill: parent
+                            anchors.margins: Theme.spacingS
+                            clip: true
+                            fadeEdges: false
+                            model: stableConflictModel
+                            spacing: Theme.groupedListGap || 2
+                            boundsBehavior: Flickable.StopAtBounds
+
+                            add: Transition {
+                                NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.shortDuration || 150; easing.type: Theme.standardEasing || Easing.OutQuad }
+                                NumberAnimation { property: "y"; from: (conflictListView.y + 10); duration: Theme.shortDuration || 150; easing.type: Theme.standardEasing || Easing.OutQuad }
+                            }
+                            remove: Transition {
+                                NumberAnimation { property: "opacity"; to: 0; duration: Theme.shortDuration || 150; easing.type: Theme.standardEasing || Easing.OutQuad }
+                            }
+                            displaced: Transition {
+                                NumberAnimation { properties: "y"; duration: Theme.shortDuration || 150; easing.type: Theme.standardEasing || Easing.OutCubic }
+                            }
+
+                            WheelHandler {
+                                id: conflictWheelHandler
+                                acceptedDevices: PointerDevice.Mouse
+                                enabled: conflictListView.contentHeight > conflictListView.height
+                                onWheel: (event) => {
+                                    if (event.pixelDelta && event.pixelDelta.y !== 0) return;
+                                    let deltaY = event.angleDelta.y;
+                                    if (deltaY === 0) return;
+                                    let step = (deltaY > 0 ? -1 : 1) * 94;
+                                    conflictListView.contentY = Math.max(0, Math.min(conflictListView.contentHeight - conflictListView.height, conflictListView.contentY + step));
+                                    event.accepted = true;
+                                }
+                            }
+
+                            delegate: Item {
+                                id: conflictItemDelegate
+                                width: ListView.view.width
+                                height: 94
+                                clip: true
+
+                                readonly property bool isFirst: index === 0
+                                readonly property bool isLast: index === conflictListView.count - 1
+                                readonly property real outerRad: Theme.groupedListOuterRadius || Theme.cornerRadiusL || 14
+                                readonly property real innerRad: Theme.groupedListInnerRadius || Theme.cornerRadiusXS || 4
+                                property bool hovered: itemDelegateMA.containsMouse
+
+                                // Category differentiation (supports ListModel properties directly as well as modelData)
+                                readonly property var itemData: (typeof modelData !== "undefined" && modelData) ? modelData : model
+                                readonly property bool hasEpConflict: itemData.hasEpDiff === true || itemData.conflictType === "progress" || itemData.conflictType === "both"
+                                readonly property bool hasStatusConflict: itemData.hasStatusDiff === true || itemData.conflictType === "status" || itemData.conflictType === "both"
+                                readonly property bool isBothDiff: hasEpConflict && hasStatusConflict
+                                readonly property bool isProgressDiff: hasEpConflict && !hasStatusConflict
+                                readonly property bool isStatusDiff: hasStatusConflict && !hasEpConflict
+                                
+                                readonly property color accentColor: isBothDiff ? (Theme.warning || "#FFB300") : (isProgressDiff ? Theme.primary : (Theme.secondary || "#E040FB"))
+                                readonly property string badgeIcon: isBothDiff ? "warning" : (isProgressDiff ? "sync_problem" : "bookmark_border")
+                                readonly property string badgeLabel: isBothDiff ? "EP & STATUS DESYNC" : (isProgressDiff ? "EPISODE DESYNC" : "STATUS CHANGED")
+
+                                Rectangle {
+                                    id: conflictItemRowBg
+                                    anchors.fill: parent
+                                    clip: true
+                                    radius: innerRad
+                                    topLeftRadius: isFirst ? outerRad : innerRad
+                                    topRightRadius: isFirst ? outerRad : innerRad
+                                    bottomLeftRadius: isLast ? outerRad : innerRad
+                                    bottomRightRadius: isLast ? outerRad : innerRad
+
+                                    Behavior on topLeftRadius { NumberAnimation { duration: 150 } }
+                                    Behavior on topRightRadius { NumberAnimation { duration: 150 } }
+                                    Behavior on bottomLeftRadius { NumberAnimation { duration: 150 } }
+                                    Behavior on bottomRightRadius { NumberAnimation { duration: 150 } }
+
+                                    color: conflictItemDelegate.hovered
+                                        ? Theme.withAlpha(Theme.surfaceVariant, 0.14)
+                                        : (Theme.foregroundColor ? Theme.foregroundColor(Theme.chipSurface) : Qt.rgba(Theme.secondary.r, Theme.secondary.g, Theme.secondary.b, 0.05))
+
+                                    border.width: 1
+                                    border.color: conflictItemDelegate.hovered
+                                        ? Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, 0.40)
+                                        : Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, 0.15)
+
+                                    Behavior on color { ColorAnimation { duration: 150 } }
+                                    Behavior on border.color { ColorAnimation { duration: 150 } }
+
+                                    DankRipple {
+                                        id: rowRipple
+                                        anchors.fill: parent
+                                        cornerRadius: isFirst || isLast ? outerRad : innerRad
+                                        rippleColor: Theme.primary
+                                    }
+                                }
+
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 14
+                                    anchors.rightMargin: 14
+                                    anchors.topMargin: 7
+                                    anchors.bottomMargin: 7
+                                    spacing: 14
+
+                                    // Anime Cover Thumbnail with 1.5x scale (60x82.5, matching 80x110 schedule aspect ratio 1:1.375)
+                                    ClippingRectangle {
+                                        id: coverThumbBox
+                                        width: 60
+                                        height: 80
+                                        radius: 10
+                                        antialiasing: true
+                                        color: Theme.withAlpha(Theme.surfaceContainer, 0.5)
+
+                                        Image {
+                                            anchors.fill: parent
+                                            source: conflictItemDelegate.itemData.image || ""
+                                            fillMode: Image.PreserveAspectCrop
+                                            visible: source.toString() !== ""
+                                        }
+
+                                        DankIcon {
+                                            anchors.centerIn: parent
+                                            name: "image"
+                                            size: 28
+                                            color: Theme.surfaceVariantText
+                                            visible: !conflictItemDelegate.itemData.image || conflictItemDelegate.itemData.image === ""
+                                            opacity: 0.6
+                                        }
+                                    }
+
+                                    // Information details with clear category differentiation badge
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        Layout.alignment: Qt.AlignVCenter
+                                        spacing: 4
+
+                                        // Category Pill Badge
+                                        Rectangle {
+                                            implicitWidth: catRow.implicitWidth + 12
+                                            implicitHeight: 20
+                                            radius: 10
+                                            color: Theme.withAlpha(conflictItemDelegate.accentColor, 0.18)
+                                            border.width: 1
+                                            border.color: Theme.withAlpha(conflictItemDelegate.accentColor, 0.45)
+
+                                            Row {
+                                                id: catRow
+                                                anchors.centerIn: parent
+                                                spacing: 4
+
+                                                DankIcon {
+                                                    name: conflictItemDelegate.badgeIcon
+                                                    size: 13
+                                                    color: conflictItemDelegate.accentColor
+                                                    anchors.verticalCenter: parent.verticalCenter
+                                                }
+
+                                                StyledText {
+                                                    text: conflictItemDelegate.badgeLabel
+                                                    font.pixelSize: 10
+                                                    font.bold: true
+                                                    color: conflictItemDelegate.accentColor
+                                                    anchors.verticalCenter: parent.verticalCenter
+                                                }
+                                            }
+                                        }
+
+                                        Item {
+                                            Layout.fillWidth: true
+                                            height: 20
+                                            clip: true
+
+                                            ScrollingText {
+                                                anchors.fill: parent
+                                                text: conflictItemDelegate.itemData.title || ""
+                                                font.pixelSize: Theme.fontSizeMedium
+                                                font.bold: true
+                                                color: Theme.surfaceText
+                                            }
+                                        }
+
+                                        StyledText {
+                                            text: conflictItemDelegate.itemData.reason || ""
+                                            font.pixelSize: Theme.fontSizeSmall
+                                            font.weight: Font.Medium
+                                            color: conflictItemDelegate.accentColor
+                                            elide: Text.ElideRight
+                                            maximumLineCount: 2
+                                            wrapMode: Text.Wrap
+                                            Layout.fillWidth: true
+                                        }
+                                    }
+
+                                    // Custom Ignore Button (Segmented pill style with icon & morphing hover radii)
+                                    Rectangle {
+                                        id: itemIgnoreBtn
+                                        implicitWidth: ignoreBtnRow.implicitWidth + 24
+                                        implicitHeight: 36
+                                        Layout.alignment: Qt.AlignVCenter
+                                        scale: itemIgnoreMA.pressed ? 0.94 : (itemIgnoreMA.containsMouse ? 1.03 : 1.0)
+                                        Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutBack } }
+
+                                        topLeftRadius: itemIgnoreMA.containsMouse ? (height / 2) : 6
+                                        bottomLeftRadius: itemIgnoreMA.containsMouse ? (height / 2) : 6
+                                        topRightRadius: itemIgnoreMA.containsMouse ? (height / 2) : 14
+                                        bottomRightRadius: itemIgnoreMA.containsMouse ? (height / 2) : 14
+
+                                        Behavior on topLeftRadius { NumberAnimation { duration: 250; easing.type: Easing.OutExpo } }
+                                        Behavior on bottomLeftRadius { NumberAnimation { duration: 250; easing.type: Easing.OutExpo } }
+                                        Behavior on topRightRadius { NumberAnimation { duration: 250; easing.type: Easing.OutExpo } }
+                                        Behavior on bottomRightRadius { NumberAnimation { duration: 250; easing.type: Easing.OutExpo } }
+
+                                        color: itemIgnoreMA.containsMouse
+                                            ? Theme.withAlpha(Theme.primary, 0.22)
+                                            : Theme.withAlpha(Theme.surfaceVariantText, 0.16)
+                                        border.width: 1
+                                        border.color: itemIgnoreMA.containsMouse
+                                            ? Theme.withAlpha(Theme.primary, 0.50)
+                                            : Theme.withAlpha(Theme.surfaceVariantText, 0.25)
+
+                                        Behavior on color { ColorAnimation { duration: 150 } }
+                                        Behavior on border.color { ColorAnimation { duration: 150 } }
+
+                                        DankRipple {
+                                            id: itemIgnoreRip
+                                            anchors.fill: parent
+                                            cornerRadius: itemIgnoreBtn.topLeftRadius
+                                            rippleColor: Theme.primary
+                                        }
+
+                                        Row {
+                                            id: ignoreBtnRow
+                                            anchors.centerIn: parent
+                                            spacing: 6
+
+                                            DankIcon {
+                                                name: "visibility_off"
+                                                size: 15
+                                                color: itemIgnoreMA.containsMouse ? Theme.primary : Theme.surfaceText
+                                                anchors.verticalCenter: parent.verticalCenter
+                                            }
+
+                                            StyledText {
+                                                id: ignoreBtnText
+                                                text: "Ignore Once"
+                                                font.pixelSize: 12
+                                                font.weight: Font.Medium
+                                                color: itemIgnoreMA.containsMouse ? Theme.primary : Theme.surfaceText
+                                                anchors.verticalCenter: parent.verticalCenter
+                                            }
+                                        }
+
+                                        MouseArea {
+                                            id: itemIgnoreMA
+                                            anchors.fill: parent
+                                            hoverEnabled: true
+                                            cursorShape: Qt.PointingHandCursor
+                                            onPressed: mouse => itemIgnoreRip.trigger(mouse.x, mouse.y)
+                                            onClicked: {
+                                                root.ignoreConflict(conflictItemDelegate.itemData.animeId);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                MouseArea {
+                                    id: itemDelegateMA
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    z: -1
+                                    onPressed: mouse => rowRipple.trigger(mouse.x, mouse.y)
+                                }
+                            }
+                        }
+                    }
+
+                    // Bottom Action Button: Styled identical to the header error indicator button
+                    // (Theme.error tint, theme corner radius, warning icon, smooth hover & ripple)
+                    Rectangle {
+                        id: ignoreAllBtn
+                        Layout.alignment: Qt.AlignHCenter
+                        Layout.topMargin: 4
+                        implicitWidth: Math.max(170, ignoreAllRow.implicitWidth + 36)
+                        implicitHeight: 40
+
+                        color: ignoreAllMA.containsMouse ? Theme.withAlpha(Theme.error, 0.25) : Theme.withAlpha(Theme.error, 0.15)
+                        border.width: 1
+                        border.color: ignoreAllMA.containsMouse ? Theme.withAlpha(Theme.error, 0.85) : Theme.withAlpha(Theme.error, 0.50)
+                        radius: Theme.cornerRadius
+
+                        scale: ignoreAllMA.pressed ? 0.95 : (ignoreAllMA.containsMouse ? 1.03 : 1.0)
+                        Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutBack } }
+                        Behavior on color { ColorAnimation { duration: 150 } }
+                        Behavior on border.color { ColorAnimation { duration: 150 } }
+
+                        DankRipple {
+                            id: ignoreAllRip
+                            anchors.fill: parent
+                            cornerRadius: parent.radius
+                            rippleColor: Theme.error
+                        }
+
+                        Row {
+                            id: ignoreAllRow
+                            anchors.centerIn: parent
+                            spacing: 8
+
+                            DankIcon {
+                                name: "warning"
+                                size: 18
+                                color: Theme.error
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+
+                            StyledText {
+                                text: "Ignore All Once"
+                                font.pixelSize: Theme.fontSizeMedium
+                                font.weight: Font.Medium
+                                color: Theme.error
+                                anchors.verticalCenter: parent.verticalCenter
                             }
                         }
 
-                        DButton {
-                            text: "Dismiss"
-                            buttonHeight: 38
-                            backgroundColor: Theme.withAlpha(Theme.surfaceVariantText, 0.2)
-                            textColor: Theme.surfaceText
+                        MouseArea {
+                            id: ignoreAllMA
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onPressed: mouse => ignoreAllRip.trigger(mouse.x, mouse.y)
                             onClicked: {
-                                root.showConflictModal = false;
+                                root.ignoreAllConflicts();
                             }
                         }
                     }
                 }
             }
         }
-    } // PopoutComponent
-} // Component (popoutContent)
+    }
 } // PluginComponent
