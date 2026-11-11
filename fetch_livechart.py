@@ -378,12 +378,18 @@ def download_image(url):
         print(f"DEBUG: Failed to download {url}: {e}", file=sys.stderr)
         return url
 
-def get_livechart_data(date_str, browser_type="firefox"):
+def get_livechart_data(date_str, browser_type="firefox", include_all_statuses=False):
     import datetime
     import multiprocessing
     import tempfile
 
-    url = f"https://www.livechart.me/schedule?date={date_str}"
+    base_url = f"https://www.livechart.me/schedule?layout=timetable&date={date_str}"
+    if include_all_statuses:
+        all_marks = ['completed', 'rewatching', 'watching', 'planning', 'considering', 'paused', 'dropped', 'skipping', 'unmarked']
+        status_params = '&'.join([f"library_statuses[{s}]=true" for s in all_marks])
+        url = f"{base_url}&{status_params}"
+    else:
+        url = base_url
         
     opener = urllib.request.build_opener()
     user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
@@ -484,9 +490,27 @@ def get_livechart_data(date_str, browser_type="firefox"):
                                     pass
         except Exception as e:
             print(f"DEBUG: GraphQL library fetch skipped: {e}", file=sys.stderr)
+
+        # Pre-cache poster images across all anime blocks to enrich scheduling info notes
+        poster_cache = {}
+        for blk in soup.find_all('div', class_='lc-timetable-anime-block'):
+            p_aid = blk.get('data-anime-item-id') or blk.get('data-schedule-anime-id') or blk.get('data-anime-id')
+            if p_aid and p_aid not in poster_cache:
+                p_img = blk.find('img', class_=re.compile(r'poster|anime-block__poster')) or blk.find('img')
+                if p_img:
+                    p_src = p_img.get('src') or p_img.get('data-src') or ''
+                    if p_src:
+                        poster_cache[str(p_aid)] = p_src
         
         results = []
         days = soup.find_all('div', class_='lc-timetable-day')
+        is_grid_layout = False
+        if not days:
+            days = soup.find_all(attrs={'data-controller': lambda c: c and 'schedule-day' in c})
+            if not days:
+                days = soup.find_all('div', class_=re.compile(r'schedule-day'))
+            if days:
+                is_grid_layout = True
         
         for daily_section in days:
             header_el = daily_section.find('h2')
@@ -517,7 +541,123 @@ def get_livechart_data(date_str, browser_type="firefox"):
                         continue
             
             anime_list = []
-            slots = daily_section.find_all('div', class_='lc-timetable-timeslot')
+            
+            if is_grid_layout:
+                articles = daily_section.find_all('article', class_=re.compile(r'lc-anime.*card'))
+                for art in articles:
+                    aid_str = art.get('data-anime-item-id') or ''
+                    title = art.get('data-anime-item-english-title') or art.get('data-anime-item-romanized-native-title') or ''
+                    if not title:
+                        t_el = art.find('a', class_=re.compile(r'title')) or art.find('a', href=re.compile(r'^/anime/\d+'))
+                        title = t_el.text.strip() if t_el else 'Unknown Title'
+
+                    # Timestamp & countdown
+                    time_tag = art.find('time', attrs={'data-timestamp': True})
+                    timestamp = time_tag.get('data-timestamp', '') if time_tag else ''
+                    countdown = time_tag.text.strip() if time_tag else ''
+
+                    # Release label & Episode
+                    rel_el = art.find('a', href=re.compile(r'/schedules/\d+')) or art.find(class_=re.compile(r'release-state'))
+                    release_label = rel_el.get_text(separator=' ', strip=True) if rel_el else ''
+                    ep_match = re.search(r'EP\s*(\d+)', release_label)
+                    ep_label = f"EP{ep_match.group(1)}" if ep_match else ""
+                    if not ep_label:
+                        ep_text_el = art.find(string=re.compile(r'EP\s*\d+'))
+                        if ep_text_el:
+                            ep_m = re.search(r'EP\s*(\d+)', ep_text_el)
+                            if ep_m:
+                                ep_label = f"EP{ep_m.group(1)}"
+                                if not release_label:
+                                    release_label = ep_text_el.strip()
+
+                    time_val = ep_label.strip() if ep_label else "TBA"
+
+                    # Poster
+                    img_elem = art.find('img', class_=re.compile(r'poster')) or art.find('img')
+                    img_src = ''
+                    if img_elem:
+                        img_src = img_elem.get('src') or img_elem.get('data-src') or ''
+                    if not img_src and aid_str in poster_cache:
+                        img_src = poster_cache[aid_str]
+                    if img_src:
+                        img_src = download_image(img_src)
+
+                    anime_link = f"https://www.livechart.me/anime/{aid_str}" if aid_str else ""
+                    watch_link = ""
+                    watch_el = art.find('a', class_=re.compile(r'watch|stream'))
+                    if watch_el and watch_el.get('href'):
+                        w_href = watch_el.get('href')
+                        watch_link = "https://www.livechart.me" + w_href if w_href.startswith('/') else w_href
+
+                    # Library status & watch progress
+                    block_aid = int(aid_str) if aid_str.isdigit() else None
+                    user_episodes_watched = None
+                    if block_aid and block_aid in user_library_map:
+                        g_status, g_watched = user_library_map[block_aid]
+                        library_status = g_status
+                        user_episodes_watched = g_watched
+                    else:
+                        library_status = art.get('data-library-status', '').strip() or 'none'
+
+                    library_status = library_status.replace('-', '_')
+                    valid_statuses = {"planning", "watching", "rewatching", "considering", 
+                                     "paused", "completed", "dropped", "skipping", "none"}
+                    if library_status not in valid_statuses:
+                        library_status = "in-list" if library_status == "in_list" else "none"
+
+                    card_ep_num = int(ep_match.group(1)) if ep_match else 0
+                    is_watched = False
+                    if user_episodes_watched is not None and card_ep_num > 0:
+                        is_watched = (card_ep_num <= user_episodes_watched)
+                    elif library_status == "completed":
+                        is_watched = True
+
+                    user_target_ep = (user_episodes_watched + 1) if user_episodes_watched is not None else (card_ep_num if not is_watched else 0)
+                    current_progress = user_episodes_watched if user_episodes_watched is not None else 0
+                    progress_target = user_target_ep
+                    has_progress = user_target_ep > 0 or not is_watched
+
+                    # Total episodes extraction
+                    total_episodes = 0
+                    total_attr = art.get('data-anime-item-total-episodes') or ''
+                    if total_attr.isdigit():
+                        total_episodes = int(total_attr)
+                    if total_episodes == 0:
+                        prog_btn = art.find(attrs={'data-progress-increment-button-total-count-value': True})
+                        if prog_btn:
+                            val = prog_btn.get('data-progress-increment-button-total-count-value', '')
+                            if val.isdigit():
+                                total_episodes = int(val)
+                    if total_episodes == 0 and release_label:
+                        tot_match = re.search(r'/\s*(\d+)', release_label)
+                        if tot_match:
+                            total_episodes = int(tot_match.group(1))
+
+                    if title != 'Unknown Title':
+                        anime_list.append({
+                            "title": title,
+                            "time": time_val,
+                            "episodeInfo": release_label.strip() if release_label else "",
+                            "image": img_src,
+                            "watchLink": watch_link,
+                            "siteDomain": "",
+                            "siteName": "",
+                            "sourceIcon": "",
+                            "accentColor": "",
+                            "countdown": countdown,
+                            "timestamp": timestamp,
+                            "animeLink": anime_link,
+                            "animeId": aid_str if aid_str else (str(block_aid) if block_aid else ""),
+                            "libraryStatus": library_status,
+                            "isWatched": is_watched,
+                            "hasProgress": has_progress,
+                            "currentProgress": current_progress,
+                            "progressTarget": progress_target,
+                            "cardEpisode": card_ep_num,
+                            "totalEpisodes": total_episodes
+                        })
+            else:
+                slots = daily_section.find_all('div', class_='lc-timetable-timeslot')
             
             for slot in slots:
                 # Get shared slot-level data
@@ -526,22 +666,85 @@ def get_livechart_data(date_str, browser_type="firefox"):
                 countdown_elem = slot.find('span', class_=re.compile(r'countdown')) or slot.find('time', class_=re.compile(r'countdown'))
                 countdown = countdown_elem.text.strip() if countdown_elem else ''
 
-                # Iterate over individual anime blocks within each timeslot
-                # Filter out nested sub-elements that might also carry lc-timetable-anime-block prefix
-                raw_blocks = slot.find_all('div', class_='lc-timetable-anime-block')
-                anime_blocks = [
-                    b for b in raw_blocks
-                    if b.get('data-anime-item-id') or b.get('data-schedule-anime-id') or b.get('data-anime-id') or b.find('a', class_=re.compile(r'anime-title|anime-block__title'))
-                ]
-                
-                if not anime_blocks:
-                    # Fallback: try to extract from slot directly (legacy timeslots)
+                content_container = slot.find('div', class_='lc-timetable-timeslot__content')
+                elements_to_process = []
+                if content_container:
+                    for child in content_container.children:
+                        if not getattr(child, 'name', None):
+                            continue
+                        classes = child.get('class', [])
+                        if 'lc-timetable-timeslot__note' in classes:
+                            elements_to_process.append(('note', child))
+                        elif 'lc-timetable-anime-block' in classes:
+                            elements_to_process.append(('anime', child))
+
+                if not elements_to_process:
+                    raw_blocks = slot.find_all('div', class_='lc-timetable-anime-block')
+                    for b in raw_blocks:
+                        if b.get('data-anime-item-id') or b.get('data-schedule-anime-id') or b.get('data-anime-id') or b.find('a', class_=re.compile(r'anime-title|anime-block__title')):
+                            elements_to_process.append(('anime', b))
+                    for n in slot.find_all('div', class_='lc-timetable-timeslot__note'):
+                        elements_to_process.append(('note', n))
+
+                if not elements_to_process:
                     title_elem = slot.find('a', class_=re.compile(r'anime-title|anime-block__title'))
-                    if not title_elem:
+                    if title_elem:
+                        elements_to_process.append(('anime', slot))
+
+                for elem_type, block in elements_to_process:
+                    if elem_type == 'note':
+                        aid_str = block.get('data-anime-id') or ''
+                        title_a = block.find('a', href=re.compile(r'^/anime/\d+'))
+                        note_title = title_a.get_text(strip=True) if title_a else 'Announcement'
+                        anime_link = "https://www.livechart.me" + title_a.get('href', '') if title_a and title_a.get('href', '').startswith('/') else (title_a.get('href', '') if title_a else '')
+
+                        schedule_a = block.find('a', href=re.compile(r'/schedules/\d+'))
+                        schedule_title = schedule_a.get_text(strip=True) if schedule_a else ''
+                        schedule_link = "https://www.livechart.me" + schedule_a.get('href', '') if schedule_a and schedule_a.get('href', '').startswith('/') else (schedule_a.get('href', '') if schedule_a else '')
+
+                        body_div = block.find(class_=re.compile(r'markdown|text--body-md')) or block.find('p')
+                        note_text = body_div.get_text(strip=True) if body_div else ''
+
+                        time_tag = slot.find('time')
+                        time_val = time_tag.get_text(strip=True) if time_tag else 'TBA'
+
+                        poster_url = poster_cache.get(str(aid_str), '')
+                        if poster_url:
+                            poster_url = download_image(poster_url)
+
+                        library_status = "none"
+                        if aid_str:
+                            try:
+                                aid_int = int(aid_str)
+                                if aid_int in user_library_map:
+                                    library_status = user_library_map[aid_int][0]
+                            except (ValueError, TypeError):
+                                pass
+
+                        anime_list.append({
+                            "isInfoNote": True,
+                            "title": note_title,
+                            "time": time_val,
+                            "episodeInfo": schedule_title,
+                            "image": poster_url,
+                            "watchLink": schedule_link,
+                            "siteDomain": "",
+                            "siteName": schedule_title,
+                            "sourceIcon": "",
+                            "countdown": countdown,
+                            "timestamp": timestamp,
+                            "animeLink": anime_link,
+                            "scheduleLink": schedule_link,
+                            "noteText": note_text,
+                            "animeId": aid_str,
+                            "libraryStatus": library_status,
+                            "isWatched": False,
+                            "hasProgress": False,
+                            "currentProgress": 0,
+                            "progressTarget": 0
+                        })
                         continue
-                    anime_blocks = [slot]
-                
-                for block in anime_blocks:
+
                     title_elem = block.find('a', class_=re.compile(r'anime-title|anime-block__title')) or block.find('a', href=re.compile(r'^/anime/\d+'))
                     title = title_elem.text.strip() if title_elem else 'Unknown Title'
                     
@@ -592,21 +795,37 @@ def get_livechart_data(date_str, browser_type="firefox"):
                             site_name = parts[-1].strip()
 
                     source_icon = ""
+                    accent_color = ""
                     if action_btn:
                         icon_img = action_btn.find('img')
                         if icon_img:
                             source_icon = icon_img.get('src') or icon_img.get('data-src') or ""
+                        style = (action_btn.get('style') or "") + " "
+                        inner_div = action_btn.find('div')
+                        if inner_div:
+                            style += inner_div.get('style') or ""
                         if not source_icon:
-                            style = (action_btn.get('style') or "") + " "
-                            inner_div = action_btn.find('div')
-                            if inner_div:
-                                style += inner_div.get('style') or ""
                             mask_match = re.search(r'url\((.*?)\)', style)
                             if mask_match:
                                 raw_url = mask_match.group(1).strip()
                                 if raw_url.startswith(('"', "'")) and raw_url.endswith(('"', "'")):
                                     raw_url = raw_url[1:-1]
                                 source_icon = raw_url
+                        # Extract accent color if available
+                        m_accent = re.search(r'--lc-contextual-accent-color-[^:]+:\s*([0-9.]+)\s+([0-9.]+)%\s+([0-9.]+)%', style)
+                        if m_accent:
+                            try:
+                                import colorsys
+                                h_val = float(m_accent.group(1))
+                                s_val = float(m_accent.group(2))
+                                l_val = float(m_accent.group(3))
+                                r_val, g_val, b_val = colorsys.hls_to_rgb(h_val / 360.0, l_val / 100.0, s_val / 100.0)
+                                accent_color = '#{:02x}{:02x}{:02x}'.format(int(round(r_val * 255)), int(round(g_val * 255)), int(round(b_val * 255)))
+                            except Exception:
+                                pass
+
+                    if source_icon and source_icon.startswith('http'):
+                        source_icon = download_image(source_icon)
                     
                     time_val = ep_label.strip() if ep_label else "TBA"
 
@@ -616,6 +835,7 @@ def get_livechart_data(date_str, browser_type="firefox"):
 
                     # Library Status Extraction
                     block_aid_raw = block.get('data-anime-item-id') or block.get('data-schedule-anime-id') or block.get('data-anime-id')
+                    aid_str = str(block_aid_raw) if block_aid_raw else ""
                     block_aid = None
                     if block_aid_raw:
                         try:
@@ -728,7 +948,23 @@ def get_livechart_data(date_str, browser_type="firefox"):
                     progress_target = user_target_ep
                     has_progress = user_target_ep > 0 or not is_watched
 
-                    if title != 'Unknown Title' and time_str != 'TBA':
+                    # Total episodes extraction
+                    total_episodes = 0
+                    total_attr = block.get('data-anime-item-total-episodes') or ''
+                    if total_attr.isdigit():
+                        total_episodes = int(total_attr)
+                    if total_episodes == 0:
+                        prog_btn = block.find(attrs={'data-progress-increment-button-total-count-value': True})
+                        if prog_btn:
+                            val = prog_btn.get('data-progress-increment-button-total-count-value', '')
+                            if val.isdigit():
+                                total_episodes = int(val)
+                    if total_episodes == 0 and release_label:
+                        tot_match = re.search(r'/\s*(\d+)', release_label)
+                        if tot_match:
+                            total_episodes = int(tot_match.group(1))
+
+                    if title != 'Unknown Title' and time_val != 'TBA':
                         anime_list.append({
                             "title": title,
                             "time": time_val,
@@ -738,14 +974,18 @@ def get_livechart_data(date_str, browser_type="firefox"):
                             "siteDomain": site_domain,
                             "siteName": site_name,
                             "sourceIcon": source_icon,
+                            "accentColor": accent_color,
                             "countdown": countdown,
                             "timestamp": timestamp,
                             "animeLink": anime_link,
+                            "animeId": aid_str if aid_str else (str(block_aid) if block_aid else ""),
                             "libraryStatus": library_status,
                             "isWatched": is_watched,
                             "hasProgress": has_progress,
                             "currentProgress": current_progress,
-                            "progressTarget": progress_target
+                            "progressTarget": progress_target,
+                            "cardEpisode": card_ep_num,
+                            "totalEpisodes": total_episodes
                         })
             
             day_name_map = {
@@ -782,14 +1022,166 @@ def get_livechart_data(date_str, browser_type="firefox"):
         sys.stdout.flush()
         sys.exit(1)
 
+def update_library_entry(anime_id, episodes_watched=None, status=None, browser_type="firefox", started_at=None, finished_at=None):
+    """
+    Update watch progress and/or status for an anime via LiveChart's GraphQL mutation.
+    Accepts:
+      anime_id: ID of the anime
+      episodes_watched: integer episode count (or None)
+      status: 'WATCHING', 'COMPLETED', 'PLANNING', 'PAUSED', 'DROPPED', etc. (or None)
+      browser_type: browser to extract session cookies from
+      started_at: 'YYYY-MM-DD' start date (or None)
+      finished_at: 'YYYY-MM-DD' finish date (or None)
+    """
+    try:
+        cookie_header = extract_cookie_header(browser_type)
+        if not cookie_header or '__Host-livechart_session' not in cookie_header:
+            print(json.dumps({
+                "success": False,
+                "error": "Not authenticated. Log in to LiveChart in your browser to sync changes.",
+                "error_type": "auth_required"
+            }))
+            sys.stdout.flush()
+            sys.exit(1)
+
+        mutation = """
+        mutation UpsertLibraryEntry($animeId: ID!, $attributes: LibraryEntryAttributes!) {
+          upsertLibraryEntry(animeId: $animeId, attributes: $attributes) {
+            libraryEntry {
+              animeDatabaseId
+              episodesWatched
+              status
+              rating
+              startedAt
+              finishedAt
+            }
+            problems {
+              ... on Problem {
+                message
+                path
+              }
+            }
+          }
+        }
+        """
+
+        attributes = {}
+        if status:
+            attributes["status"] = status.upper().replace('-', '_')
+        if episodes_watched is not None:
+            attributes["episodesWatched"] = int(episodes_watched)
+        if started_at:
+            attributes["startedAt"] = str(started_at)
+        if finished_at:
+            attributes["finishedAt"] = str(finished_at)
+
+        payload = {
+            "query": mutation,
+            "variables": {
+                "animeId": str(anime_id),
+                "attributes": attributes
+            }
+        }
+
+        user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        
+        # LiveChart requires the CSRF token on POST/GraphQL requests
+        csrf_token = ""
+        try:
+            tok_req = urllib.request.Request(
+                'https://www.livechart.me/schedule',
+                headers={'User-Agent': user_agent, 'Cookie': cookie_header}
+            )
+            with urllib.request.urlopen(tok_req, timeout=10) as t_resp:
+                t_html = t_resp.read().decode('utf-8', errors='ignore')
+                m_tok = re.search(r'name=[\'"]authenticity_token[\'"]\s+value=[\'"]([^\'"]+)[\'"]', t_html)
+                if not m_tok:
+                    m_tok = re.search(r'<meta[^>]+name=[\'"]csrf-token[\'"][^>]+content=[\'"]([^\'"]+)[\'"]', t_html)
+                if m_tok:
+                    csrf_token = m_tok.group(1)
+        except Exception as e_tok:
+            print(f"DEBUG: Could not fetch CSRF token: {e_tok}", file=sys.stderr)
+
+        req_headers = {
+            'Content-Type': 'application/json',
+            'User-Agent': user_agent,
+            'Cookie': cookie_header
+        }
+        if csrf_token:
+            req_headers['X-CSRF-Token'] = csrf_token
+
+        req = urllib.request.Request(
+            'https://www.livechart.me/graphql',
+            data=json.dumps(payload).encode('utf-8'),
+            headers=req_headers
+        )
+
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            errors = data.get("errors")
+            if errors:
+                err_msg = errors[0].get("message", "Mutation failed")
+                print(json.dumps({
+                    "success": False,
+                    "error": err_msg,
+                    "error_type": "api_error"
+                }))
+                sys.stdout.flush()
+                sys.exit(1)
+
+            upsert_data = data.get("data", {}).get("upsertLibraryEntry", {})
+            problems = upsert_data.get("problems", [])
+            if problems:
+                print(json.dumps({
+                    "success": False,
+                    "error": problems[0].get("message", "Validation error"),
+                    "error_type": "validation_error"
+                }))
+                sys.stdout.flush()
+                sys.exit(1)
+
+            library_entry = upsert_data.get("libraryEntry", {})
+            print(json.dumps({
+                "success": True,
+                "animeId": str(anime_id),
+                "data": library_entry
+            }))
+            sys.stdout.flush()
+            sys.exit(0)
+
+    except Exception as e:
+        import traceback
+        print(f"DEBUG: Error updating library entry: {traceback.format_exc()}", file=sys.stderr)
+        print(json.dumps({
+            "success": False,
+            "error": str(e),
+            "error_type": "generic"
+        }))
+        sys.stdout.flush()
+        sys.exit(1)
+
 if __name__ == "__main__":
     try:
         # Check dependencies before doing anything else
         check_dependencies()
         
-        date = sys.argv[1] if len(sys.argv) > 1 else "2026-03-01"
-        browser = sys.argv[2] if len(sys.argv) > 2 else "firefox"
-        get_livechart_data(date, browser)
+        # Check for --update action:
+        # e.g.: fetch_livechart.py --update <anime_id> <episodes_watched> [status] [browser] [started_at] [finished_at]
+        if len(sys.argv) > 1 and sys.argv[1] == "--update":
+            anime_id = sys.argv[2] if len(sys.argv) > 2 else ""
+            episodes_watched = sys.argv[3] if len(sys.argv) > 3 and sys.argv[3] != "null" else None
+            status = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] != "null" else None
+            browser = sys.argv[5] if len(sys.argv) > 5 else "firefox"
+            started_at = sys.argv[6] if len(sys.argv) > 6 and sys.argv[6] != "null" else None
+            finished_at = sys.argv[7] if len(sys.argv) > 7 and sys.argv[7] != "null" else None
+            update_library_entry(anime_id, episodes_watched, status, browser, started_at, finished_at)
+        else:
+            date = sys.argv[1] if len(sys.argv) > 1 else "2026-03-01"
+            browser = sys.argv[2] if len(sys.argv) > 2 else "firefox"
+            include_all = False
+            if len(sys.argv) > 3:
+                include_all = sys.argv[3].lower() in ("true", "1", "all", "yes")
+            get_livechart_data(date, browser, include_all)
     except Exception as e:
         import traceback
         err_msg = str(e)

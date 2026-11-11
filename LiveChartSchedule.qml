@@ -406,6 +406,7 @@ Item {
             width: parent.width
             height: 540
             spacing: 12
+            clip: true
             
             Repeater {
                 model: widgetRoot.daysToShow
@@ -479,13 +480,14 @@ Item {
         // Schedule List Weekly Horizontal Grid
         DankListView {
             id: mainListView
-            visible: widgetRoot.scheduleData.length > 0
+            visible: !widgetRoot.isLoading && widgetRoot.scheduleData.length > 0
             width: parent.width
             height: 540 // Increased to accommodate headers
             orientation: ListView.Horizontal
             model: widgetRoot.scheduleData
             spacing: 12 // Reduced gap
             clip: true
+            fadeEdges: false
             
             delegate: Item {
                 id: dayDelegate
@@ -569,7 +571,12 @@ Item {
                             }
                             
                             StyledText {
-                                text: modelData.date !== "" ? modelData.day + ", " + modelData.date : modelData.day
+                                text: {
+                                    if (!modelData.date || modelData.date === "") return modelData.day;
+                                    var currentYear = String(new Date().getFullYear());
+                                    var cleanDate = modelData.date.replace(new RegExp(",\\s*" + currentYear + "$"), "");
+                                    return modelData.day + ", " + cleanDate;
+                                }
                                 font.pixelSize: Theme.fontSizeMedium
                                 font.weight: headerSegment.isToday ? Font.Medium : Font.Normal
                                 color: headerSegment.isToday ? Theme.buttonText : Theme.surfaceVariantText
@@ -606,6 +613,7 @@ Item {
                         model: modelData.shows
                         spacing: 0 // Using internal delegate lines
                         clip: true
+                        fadeEdges: false
 
                         readonly property Item outerDelegate: dayDelegate
                         readonly property int timelineX: dayColumn.timelineX
@@ -1209,14 +1217,17 @@ Item {
 
                                          MouseArea {
                                              anchors.fill: parent
-                                             enabled: widgetRoot.coverClickAction !== "none"
                                              cursorShape: Qt.PointingHandCursor
                                              onPressed: (mouse) => {
                                                  markRipple.trigger(mouse.x, mouse.y);
                                              }
                                              onClicked: {
-                                                 if (widgetRoot.coverClickAction === "anime_entry" && modelData.animeLink) {
-                                                     widgetRoot.openUrl(modelData.animeLink)
+                                                 markWatchedBtn.visible = false;
+                                                 var nextEp = modelData.progressTarget || ((modelData.currentProgress || 0) + 1);
+                                                 if (modelData.animeId && widgetRoot.updateAnimeProgress) {
+                                                     widgetRoot.updateAnimeProgress(modelData.animeId, nextEp, "WATCHING", modelData.title, modelData.totalEpisodes, modelData.libraryStatus, modelData.image || "");
+                                                 } else if (modelData.animeLink) {
+                                                     widgetRoot.openUrl(modelData.animeLink);
                                                  }
                                              }
                                          }
