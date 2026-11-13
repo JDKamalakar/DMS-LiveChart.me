@@ -357,9 +357,9 @@ PluginComponent {
         if (root.isLoading) return isVertical ? "..." : "Fetching...";
         
         let todayCount = 0;
-        for (let i = 0; i < root.fullScheduleData.length; i++) {
-            if (root.fullScheduleData[i].day === root.currentDayName) {
-                let sList = root.fullScheduleData[i].shows || [];
+        for (let i = 0; i < root.scheduleData.length; i++) {
+            if (root.scheduleData[i].day === root.currentDayName) {
+                let sList = root.scheduleData[i].shows || [];
                 todayCount = sList.filter(s => !s.isInfoNote).length;
                 break;
             }
@@ -383,9 +383,9 @@ PluginComponent {
         let nextShows = [];
         let recentShows = [];
 
-        for (let i = 0; i < root.fullScheduleData.length; i++) {
-            let day = root.fullScheduleData[i];
-            for (let j = 0; j < day.shows.length; j++) {
+        for (let i = 0; i < root.scheduleData.length; i++) {
+            let day = root.scheduleData[i];
+            for (let j = 0; j < (day.shows || []).length; j++) {
                 let show = day.shows[j];
                 if (show.isInfoNote) continue;
                 let ts = parseFloat(show.timestamp);
@@ -416,6 +416,12 @@ PluginComponent {
             return res.trim();
         }
 
+        function formatShowEp(show) {
+            if (show.cardEpisode) return "Ep " + show.cardEpisode;
+            if (show.time && String(show.time).toUpperCase().startsWith("EP")) return show.time;
+            return "";
+        }
+
         let mode = root.dankbarPill;
         if (mode === "dynamic") mode = (root.dynamicDisplayMode === "next" ? "next_airing" : "recently_aired");
 
@@ -426,7 +432,8 @@ PluginComponent {
             for (let i = 0; i < Math.min(nextShows.length, root.dankbarLimit); i++) {
                 let ns = nextShows[i];
                 let timeStr = formatTimeDiff(ns.diff);
-                displays.push(`${ns.show.title} ${ns.show.ep ? "Ep " + ns.show.ep : ""} (in ${timeStr})`);
+                let epStr = formatShowEp(ns.show);
+                displays.push(`${ns.show.title}${epStr ? " " + epStr : ""} (in ${timeStr})`);
             }
             return displays.join("  •  ");
         }
@@ -438,7 +445,8 @@ PluginComponent {
             for (let i = 0; i < Math.min(recentShows.length, root.dankbarLimit); i++) {
                 let rs = recentShows[i];
                 let timeStr = formatTimeDiff(rs.diff);
-                displays.push(`${rs.show.title} ${rs.show.ep ? "Ep " + rs.show.ep : ""} (${timeStr} ago)`);
+                let epStr = formatShowEp(rs.show);
+                displays.push(`${rs.show.title}${epStr ? " " + epStr : ""} (${timeStr} ago)`);
             }
             return displays.join("  •  ");
         }
